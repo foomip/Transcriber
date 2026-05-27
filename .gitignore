@@ -10,6 +10,9 @@ whisper_env/
 *_report.md
 meeting_*.md
 !requirements.txt
+!samples/28000_tokens_summary_output.md
+!samples/2800_tokens_transcript.txt
+!samples/example_recording.wav
 
 # local .envrc should not be committed
 .envrc
