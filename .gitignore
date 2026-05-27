@@ -9,6 +9,7 @@ whisper_env/
 *.txt
 *_report.md
 meeting_*.md
+!requirements.txt
 
 # local .envrc should not be committed
 .envrc
