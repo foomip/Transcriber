@@ -65,6 +65,14 @@ TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
 
 This is the current default because it is still practical locally while offering stronger general instruction-following than LFM2 in this workflow.
 
+Transcript prompt size is capped dynamically from available RAM. For repeatable model comparisons, use a fixed cap:
+
+```bash
+TRANSCRIBER_MAX_TRANSCRIPT_CHARS=80000 \
+	TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-7B-Instruct" \
+	python transcribe.py meeting_20260527_114300.wav
+```
+
 Recommended alternatives:
 
 | Model                                  | Why Consider It                                            | Fit                                             |

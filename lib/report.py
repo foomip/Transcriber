@@ -12,8 +12,59 @@ import os
 import re
 from datetime import datetime, timedelta
 
+GIB = 1024**3
+
 # Keep the transcript body bounded so local analysis models have prompt headroom.
-MAX_TRANSCRIPT_CHARS = 28_000
+MIN_TRANSCRIPT_CHARS = 28_000
+MAX_TRANSCRIPT_CHARS = 120_000
+RESERVED_ANALYSIS_MEMORY_GIB = 8
+TRANSCRIPT_CHARS_PER_AVAILABLE_GIB = 12_000
+TRANSCRIPT_BUDGET_ENV = "TRANSCRIBER_MAX_TRANSCRIPT_CHARS"
+
+
+def _available_memory_bytes() -> int | None:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return None
+
+    if pages <= 0 or page_size <= 0:
+        return None
+    return int(pages) * int(page_size)
+
+
+def transcript_char_budget(available_memory_bytes: int | None = None) -> int:
+    override = os.environ.get(TRANSCRIPT_BUDGET_ENV)
+    if override:
+        try:
+            budget = int(override.replace("_", ""))
+        except ValueError:
+            print(f"  ⚠️  Ignoring invalid {TRANSCRIPT_BUDGET_ENV}={override!r}")
+        else:
+            if budget > 0:
+                return budget
+            print(f"  ⚠️  Ignoring non-positive {TRANSCRIPT_BUDGET_ENV}={override!r}")
+
+    if available_memory_bytes is None:
+        available_memory_bytes = _available_memory_bytes()
+    if available_memory_bytes is None:
+        return MIN_TRANSCRIPT_CHARS
+
+    reserved_bytes = RESERVED_ANALYSIS_MEMORY_GIB * GIB
+    extra_gib = max(0.0, (available_memory_bytes - reserved_bytes) / GIB)
+    dynamic_budget = MIN_TRANSCRIPT_CHARS + int(
+        extra_gib * TRANSCRIPT_CHARS_PER_AVAILABLE_GIB
+    )
+    return min(MAX_TRANSCRIPT_CHARS, max(MIN_TRANSCRIPT_CHARS, dynamic_budget))
 
 
 def parse_recording_meta(audio_path: str) -> dict[str, str]:
@@ -76,13 +127,14 @@ def build_transcript_body(lines: list[str]) -> str:
         if line.strip()
     ]
     body = "\n".join(plain)
+    max_transcript_chars = transcript_char_budget()
 
-    if len(body) > MAX_TRANSCRIPT_CHARS:
+    if len(body) > max_transcript_chars:
         print(
-            f"  ⚠️  Transcript is long — truncating to {MAX_TRANSCRIPT_CHARS:,} chars "
+            f"  ⚠️  Transcript is long — truncating to {max_transcript_chars:,} chars "
             f"to stay within the analysis prompt budget."
         )
-        body = body[:MAX_TRANSCRIPT_CHARS] + "\n[... transcript truncated ...]"
+        body = body[:max_transcript_chars] + "\n[... transcript truncated ...]"
 
     return body
 
