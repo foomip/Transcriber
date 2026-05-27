@@ -2,5 +2,8 @@
   "python.defaultInterpreterPath": "${workspaceFolder}/whisper_env/bin/python",
   "python.analysis.extraPaths": [
     "${workspaceFolder}/whisper_env/lib/python3.14/site-packages"
+  ],
+  "cSpell.words": [
+    "Qwen"
   ]
 }
