@@ -304,6 +304,14 @@ python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
            AutoModelForCausalLM.from_pretrained('Qwen/Qwen2.5-3B-Instruct')"
 ```
 
+**`torchvision::nms` error while loading Qwen**
+
+This app does not use torchvision. If Transformers tries to import a mismatched torchvision build, model loading can fail with `RuntimeError: operator torchvision::nms does not exist`. Remove the stray package from the virtual environment:
+
+```bash
+whisper_env/bin/python -m pip uninstall -y torchvision
+```
+
 ---
 
 ## Privacy
