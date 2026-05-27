@@ -1,12 +1,15 @@
 """
-analysis.py — LFM2-2.6B-Transcript model loading and summary generation.
+analysis.py — local Hugging Face model loading and summary generation.
 
 Responsibilities:
-    - Load LiquidAI/LFM2-2.6B-Transcript (auto-placed on GPU when available)
-    - Format transcript text into the LFM2 prompting schema
-    - Run each of the five summary passes and return (heading, text) pairs
+    - Load the configured analysis model (auto-placed on GPU when available)
+    - Format transcript text into a grounded meeting-analysis prompt
+    - Run report generation and return (heading, text) pairs
 """
 
+import os
+import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -15,15 +18,29 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from lib.progress import ProgressTimer
 
-LFM2_MODEL_ID = "LiquidAI/LFM2-2.6B-Transcript"
-LFM2_SYSTEM_PROMPT = (
+DEFAULT_ANALYSIS_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+ANALYSIS_MODEL_ID = os.environ.get("TRANSCRIBER_ANALYSIS_MODEL", DEFAULT_ANALYSIS_MODEL_ID)
+ANALYSIS_SYSTEM_PROMPT = (
     "You are an expert meeting analyst. Analyze the transcript carefully "
-    "and provide clear, accurate information based on the content."
+    "and provide clear, accurate information based only on the transcript. "
+    "Do not invent facts, names, dates, events, decisions, or background details. "
+    "If the transcript does not contain information for a requested section, say so explicitly."
 )
-LFM2_TEMPERATURE    = 0.3
-LFM2_MAX_NEW_TOKENS = 800
+ANALYSIS_MAX_NEW_TOKENS = 2048
+GROUNDING_MIN_RATIO = 0.16
+GROUNDING_MIN_TOP_TERM_OVERLAP = 2
 
-# Each tuple: (markdown heading, LFM2 instruction)
+_STOP_WORDS = {
+    "about", "above", "after", "again", "against", "also", "another", "because",
+    "before", "being", "between", "could", "during", "every", "first", "from",
+    "have", "having", "into", "itself", "just", "like", "major", "meeting",
+    "more", "most", "other", "over", "really", "should", "some", "specific",
+    "still", "their", "there", "these", "thing", "things", "think", "this",
+    "those", "through", "today", "under", "using", "where", "which", "while",
+    "with", "would", "youre",
+}
+
+# Each tuple: (markdown heading, analysis instruction)
 SUMMARY_TASKS: list[tuple[str, str]] = [
     (
         "## Executive Summary",
@@ -46,6 +63,14 @@ SUMMARY_TASKS: list[tuple[str, str]] = [
         "List the main topics and subjects that were discussed in this meeting.",
     ),
 ]
+
+
+class AnalysisGroundingError(RuntimeError):
+    """Raised when generated analysis is not sufficiently grounded in the transcript."""
+
+
+class AnalysisModelError(RuntimeError):
+    """Raised when the configured analysis model cannot be loaded or initialized."""
 
 
 class ChatTokenizer(Protocol):
@@ -78,7 +103,7 @@ class AnalysisBackend:
 
 
 def detect_analysis_backend() -> AnalysisBackend:
-    """Return the best PyTorch backend for LFM2 summarization."""
+    """Return the best PyTorch backend for summarization."""
     hip_version = getattr(torch.version, "hip", None)
 
     if torch.cuda.is_available():
@@ -108,14 +133,13 @@ def detect_analysis_backend() -> AnalysisBackend:
 
 
 def _build_user_message(
-    instruction: str,
     transcript_body: str,
     meta: dict[str, str],
 ) -> str:
     """
-    Assemble a user message in the LFM2 prompting schema:
+    Assemble a user message for the analysis model:
 
-        <instruction>
+        <instructions>
 
         Title: …
         Date:  …
@@ -124,8 +148,17 @@ def _build_user_message(
 
         <transcript text>
     """
+    section_instructions = "\n".join(
+        f"{heading}\n{instruction}" for heading, instruction in SUMMARY_TASKS
+    )
+
     return (
-        f"{instruction}\n\n"
+        "Create a Markdown meeting report using exactly the sections listed below. "
+        "Use only facts present in the transcript. Do not add external context, examples, "
+        "biographical details, sports results, historical background, or generic explanations. "
+        "If there are no action items or no key decisions, write that none were explicitly stated. "
+        "Return only the requested Markdown sections and their content.\n\n"
+        f"{section_instructions}\n\n"
         f"Title: {meta['title']}\n"
         f"Date: {meta['date']}\n"
         f"Time: {meta['time']}\n"
@@ -136,14 +169,73 @@ def _build_user_message(
     )
 
 
+def _content_words(text: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[a-z][a-z0-9']+", text.lower())
+        if len(token) >= 4 and token not in _STOP_WORDS
+    ]
+
+
+def _validate_grounding(generated_report: str, transcript_body: str) -> None:
+    transcript_words = _content_words(transcript_body)
+    generated_words = _content_words(generated_report)
+    if not transcript_words or not generated_words:
+        return
+
+    transcript_terms = set(transcript_words)
+    grounded_count = sum(1 for word in generated_words if word in transcript_terms)
+    grounded_ratio = grounded_count / len(generated_words)
+
+    top_transcript_terms = {
+        term for term, _ in Counter(transcript_words).most_common(20)
+    }
+    top_term_overlap = top_transcript_terms.intersection(generated_words)
+
+    if (
+        grounded_ratio < GROUNDING_MIN_RATIO
+        or len(top_term_overlap) < GROUNDING_MIN_TOP_TERM_OVERLAP
+    ):
+        raise AnalysisGroundingError(
+            "Generated report appears unrelated to the transcript "
+            f"(grounded word ratio {grounded_ratio:.0%}, "
+            f"top-term overlap {len(top_term_overlap)}). "
+            "Refusing to save hallucinated analysis."
+        )
+
+
+def _parse_report_sections(generated_report: str) -> list[tuple[str, str]]:
+    headings = [heading for heading, _ in SUMMARY_TASKS]
+    pattern = re.compile(
+        r"(?m)^(## (?:"
+        + "|".join(re.escape(heading.removeprefix("## ")) for heading in headings)
+        + r"))\s*$"
+    )
+    matches = list(pattern.finditer(generated_report))
+    found: dict[str, str] = {}
+
+    for index, match in enumerate(matches):
+        heading = match.group(1)
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(generated_report)
+        text = generated_report[start:end].strip()
+        if heading not in found:
+            found[heading] = text
+
+    return [
+        (heading, found.get(heading, "No information was generated for this section."))
+        for heading in headings
+    ]
+
+
 def _query(
     model: GenerativeModel,
     tokenizer: ChatTokenizer,
     user_message: str,
 ) -> str:
-    """Run a single LFM2 forward pass and return only the generated text."""
+    """Run a single analysis-model forward pass and return only the generated text."""
     messages = [
-        {"role": "system", "content": LFM2_SYSTEM_PROMPT},
+        {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},
     ]
     inputs = tokenizer.apply_chat_template(
@@ -153,9 +245,8 @@ def _query(
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
-            max_new_tokens=LFM2_MAX_NEW_TOKENS,
-            temperature=LFM2_TEMPERATURE,
-            do_sample=True,
+            max_new_tokens=ANALYSIS_MAX_NEW_TOKENS,
+            do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
 
@@ -169,7 +260,7 @@ def generate_summaries(
     meta: dict[str, str],
 ) -> list[tuple[str, str]]:
     """
-    Load LFM2-2.6B-Transcript and run all five summary passes.
+    Load the configured analysis model and generate the report sections.
 
     Returns a list of (markdown_heading, generated_text) pairs in the
     same order as SUMMARY_TASKS, ready to be handed to report.compile().
@@ -177,8 +268,8 @@ def generate_summaries(
     device_map="auto" lets HuggingFace Accelerate place the model on the
     best available PyTorch backend. ROCm GPUs appear through torch.cuda.
     """
-    print(f"\n🤖 Loading {LFM2_MODEL_ID}...")
-    print("   (First run downloads ~5 GB to the HuggingFace cache.)\n")
+    print(f"\n🤖 Loading {ANALYSIS_MODEL_ID}...")
+    print("   (First run downloads model files to the HuggingFace cache.)\n")
 
     backend = detect_analysis_backend()
     if backend.name == "rocm":
@@ -192,30 +283,37 @@ def generate_summaries(
     model_factory: Any = AutoModelForCausalLM
 
     with ProgressTimer(
-        "  Loading LFM2 tokenizer...",
+        "  Loading analysis tokenizer...",
         done_message="Tokenizer loaded",
     ):
-        tokenizer = cast(ChatTokenizer, tokenizer_factory.from_pretrained(LFM2_MODEL_ID))
+        try:
+            tokenizer = cast(ChatTokenizer, tokenizer_factory.from_pretrained(ANALYSIS_MODEL_ID))
+        except Exception as exc:
+            raise AnalysisModelError(
+                f"Could not load tokenizer for {ANALYSIS_MODEL_ID}: {exc}"
+            ) from exc
 
     with ProgressTimer(
-        "  Loading LFM2 model and placing weights...",
+        "  Loading analysis model and placing weights...",
         done_message=f"Model ready on {backend.name.upper()}",
     ):
-        model = cast(GenerativeModel, model_factory.from_pretrained(
-            LFM2_MODEL_ID,
-            **backend.model_kwargs,
-        ))
+        try:
+            model = cast(GenerativeModel, model_factory.from_pretrained(
+                ANALYSIS_MODEL_ID,
+                **backend.model_kwargs,
+            ))
+        except Exception as exc:
+            raise AnalysisModelError(
+                f"Could not load analysis model {ANALYSIS_MODEL_ID}: {exc}"
+            ) from exc
     model.eval()
 
-    sections: list[tuple[str, str]] = []
-    for heading, instruction in SUMMARY_TASKS:
-        section_name = heading.lstrip("# ")
-        user_msg = _build_user_message(instruction, transcript_body, meta)
-        with ProgressTimer(
-            f"  Generating: {section_name}...",
-            done_message=f"Generated {section_name}",
-        ):
-            result = _query(model, tokenizer, user_msg)
-        sections.append((heading, result))
+    user_msg = _build_user_message(transcript_body, meta)
+    with ProgressTimer(
+        "  Generating meeting summary report...",
+        done_message="Generated meeting summary report",
+    ):
+        generated_report = _query(model, tokenizer, user_msg)
 
-    return sections
+    _validate_grounding(generated_report, transcript_body)
+    return _parse_report_sections(generated_report)
