@@ -3,6 +3,26 @@
 A fully **local**, **private** meeting recorder and transcription pipeline for Linux.
 Record any online meeting, transcribe it with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), and generate a structured Markdown report using [Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct). No cloud services. No API keys. Nothing leaves your machine.
 
+## Table of Contents
+
+- [How It Works](#how-it-works)
+- [Requirements](#requirements)
+  - [System packages](#system-packages)
+  - [Python packages](#python-packages)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Output Files](#output-files)
+  - [Transcript format](#transcript-format)
+  - [Report format](#report-format)
+- [Configuration](#configuration)
+  - [Whisper model size](#whisper-model-size)
+  - [Analysis model](#analysis-model)
+  - [Transcript prompt budget](#transcript-prompt-budget)
+- [Platform Notes — Pop!\_OS 24.04 with COSMIC Desktop](#platform-notes--pop_os-2404-with-cosmic-desktop)
+  - [Dummy Output bug (kernel 6.16.x)](#dummy-output-bug-kernel-616x)
+- [Troubleshooting](#troubleshooting)
+- [Privacy](#privacy)
+
 ---
 
 ## How It Works
@@ -241,6 +261,16 @@ TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
 ```
 
 The replacement model must load with `AutoModelForCausalLM.from_pretrained(...)` and provide a tokenizer chat template via `apply_chat_template(...)`.
+
+### Transcript prompt budget
+
+The transcript text sent to the analysis model is capped dynamically based on currently available RAM. The app reserves memory for the model/runtime, then raises the transcript budget on machines with more headroom while keeping a conservative ceiling for CPU inference.
+
+To force a specific cap for one run, set `TRANSCRIBER_MAX_TRANSCRIPT_CHARS`:
+
+```bash
+TRANSCRIBER_MAX_TRANSCRIPT_CHARS=80000 python transcribe.py meeting_20260527_114300.wav
+```
 
 ---
 
