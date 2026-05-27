@@ -7,7 +7,7 @@ Usage:
 
 Pipeline:
   1. transcription.py  — detect GPU, run Faster-Whisper, produce timestamped lines
-  2. analysis.py       — load LFM2-2.6B-Transcript, run five summary passes
+    2. analysis.py       — load the local analysis model, generate report sections
   3. report.py         — compile everything into a structured Markdown report
 
 Output (written alongside the source WAV):
@@ -72,7 +72,12 @@ def run(audio_path: str) -> None:
     meta["duration"] = report.estimate_duration(lines)
     transcript_body  = report.build_transcript_body(lines)
 
-    sections = analysis.generate_summaries(transcript_body, meta)
+    try:
+        sections = analysis.generate_summaries(transcript_body, meta)
+    except (analysis.AnalysisGroundingError, analysis.AnalysisModelError) as exc:
+        print(f"\n❌  Analysis failed: {exc}")
+        print("    The transcript was saved, but no Markdown report was written.")
+        sys.exit(1)
 
     # ── Step 3: Compile and save Markdown report ───────────────────────────
     print("\n▶ Step 3/3: Saving Markdown report")
