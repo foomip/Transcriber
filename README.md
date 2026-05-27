@@ -178,7 +178,7 @@ For a recording named `meeting_20260527_114300.wav`, two files are produced alon
 
 ### Report format
 
-The Markdown report contains five sections, each generated as a separate LFM2 inference pass:
+The Markdown report contains five sections generated in one grounded LFM2 inference pass. The analysis step uses deterministic decoding and refuses to write a report if the generated text appears unrelated to the transcript:
 
 ```markdown
 # Meeting Report
@@ -230,6 +230,17 @@ The default model is `base`, which is fast on CPU and accurate enough for clear 
 # transcribe.py — line 27
 WHISPER_MODEL_SIZE = "small"   # change here
 ```
+
+### Analysis model
+
+The default analysis model is `LiquidAI/LFM2-2.6B-Transcript`. To compare another local Hugging Face chat/instruct model without editing source, set `TRANSCRIBER_ANALYSIS_MODEL` for a single run:
+
+```bash
+TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
+   python transcribe.py meeting_20260527_114300.wav
+```
+
+The replacement model must load with `AutoModelForCausalLM.from_pretrained(...)` and provide a tokenizer chat template via `apply_chat_template(...)`.
 
 ---
 
