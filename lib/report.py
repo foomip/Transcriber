@@ -12,7 +12,7 @@ import os
 import re
 from datetime import datetime, timedelta
 
-# LFM2 has a 32 K-token context window; we leave headroom for the prompt wrapper.
+# Keep the transcript body bounded so local analysis models have prompt headroom.
 MAX_TRANSCRIPT_CHARS = 28_000
 
 
@@ -67,8 +67,8 @@ def estimate_duration(lines: list[str]) -> str:
 def build_transcript_body(lines: list[str]) -> str:
     """
     Strip the  [HH:MM:SS.xx -> HH:MM:SS.xx]  prefix from every line and
-    join them into a single block of plain text, ready to be fed to LFM2.
-    Truncates with a warning if the result would exceed LFM2's context window.
+    join them into a single block of plain text, ready for analysis.
+    Truncates with a warning if the result exceeds the configured prompt budget.
     """
     plain = [
         re.sub(r"^\[.*?\]\s*", "", line).strip()
@@ -80,7 +80,7 @@ def build_transcript_body(lines: list[str]) -> str:
     if len(body) > MAX_TRANSCRIPT_CHARS:
         print(
             f"  ⚠️  Transcript is long — truncating to {MAX_TRANSCRIPT_CHARS:,} chars "
-            f"to stay within LFM2's context window."
+            f"to stay within the analysis prompt budget."
         )
         body = body[:MAX_TRANSCRIPT_CHARS] + "\n[... transcript truncated ...]"
 
