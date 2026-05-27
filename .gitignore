@@ -1,0 +1,22 @@
+# Python virtual environment
+whisper_env/
+
+# HuggingFace model cache (if ever pointed inside the project)
+.cache/
+
+# Recorded meetings and generated output — these are personal data
+*.wav
+*.txt
+*_report.md
+meeting_*.md
+
+# local .envrc should not be committed
+.envrc
+
+# Python bytecode
+__pycache__/
+lib/__pycache__/
+*.py[cod]
+
+# direnv
+.direnv/

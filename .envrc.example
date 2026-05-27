@@ -1,0 +1,3 @@
+export VIRTUAL_ENV="$PWD/whisper_env"
+PATH_add "$VIRTUAL_ENV/bin"
+unset PYTHON_HOME
