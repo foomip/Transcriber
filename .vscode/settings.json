@@ -4,6 +4,7 @@
     "${workspaceFolder}/whisper_env/lib/python3.14/site-packages"
   ],
   "cSpell.words": [
-    "Qwen"
+    "Qwen",
+    "torchvision"
   ]
 }
