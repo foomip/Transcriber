@@ -3,7 +3,7 @@
 This project has two separate model stages:
 
 1. **Transcription**: speech-to-text, currently handled by Faster-Whisper in `lib/transcription.py`.
-2. **Analysis and summarization**: transcript-to-report generation, currently handled by `LiquidAI/LFM2-2.6B-Transcript` in `lib/analysis.py`.
+2. **Analysis and summarization**: transcript-to-report generation, currently handled by `Qwen/Qwen2.5-3B-Instruct` in `lib/analysis.py`.
 
 ## Transcription Model Recommendations
 
@@ -53,7 +53,7 @@ Notes:
 The default analysis model is:
 
 ```python
-LFM2_MODEL_ID = "LiquidAI/LFM2-2.6B-Transcript"
+DEFAULT_ANALYSIS_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 ```
 
 For one-off comparisons, override it without editing source:
@@ -63,26 +63,27 @@ TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
-This is a sensible default because it is local, relatively small, and designed for transcript summarization.
+This is the current default because it is still practical locally while offering stronger general instruction-following than LFM2 in this workflow.
 
 Recommended alternatives:
 
-| Model                                  | Why Consider It                                   | Fit                                             |
-| -------------------------------------- | ------------------------------------------------- | ----------------------------------------------- |
-| `mistralai/Mistral-7B-Instruct-v0.3`   | Efficient, strong summarization, widely supported | Best first serious comparison                   |
-| `meta-llama/Meta-Llama-3-8B-Instruct`  | Strong instruction following and meeting analysis | Good quality upgrade if hardware allows         |
-| `Qwen/Qwen2-7B-Instruct`               | Good structured output and multilingual handling  | Good for technical or mixed-language meetings   |
-| `google/gemma-2-9b-it`                 | Strong summarization and reasoning                | Good quality option, but check hardware support |
-| `microsoft/Phi-3-mini-4k-instruct`     | Small and fast                                    | Good low-resource option, but limited context   |
-| `microsoft/Phi-3-small-8k-instruct`    | Compact with better context than Phi mini         | Good middle-ground local model                  |
-| `NousResearch/Hermes-2-Pro-Mistral-7B` | Often good at structured response formats         | Useful for action items and decisions           |
-| `CohereForAI/c4ai-command-r-v01`       | Strong long-context summarization                 | Excellent but much heavier                      |
+| Model                                  | Why Consider It                                            | Fit                                             |
+| -------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------- |
+| `Qwen/Qwen2.5-3B-Instruct`             | Current default; strong instruction following for its size | Best first option for local runs                |
+| `mistralai/Mistral-7B-Instruct-v0.3`   | Efficient, strong summarization, widely supported          | Strong comparison model                         |
+| `meta-llama/Meta-Llama-3-8B-Instruct`  | Strong instruction following and meeting analysis          | Good quality upgrade if hardware allows         |
+| `Qwen/Qwen2.5-7B-Instruct`             | Better quality than the 3B default, but heavier            | Good upgrade if hardware allows                 |
+| `google/gemma-2-9b-it`                 | Strong summarization and reasoning                         | Good quality option, but check hardware support |
+| `microsoft/Phi-3-mini-4k-instruct`     | Small and fast                                             | Good low-resource option, but limited context   |
+| `microsoft/Phi-3-small-8k-instruct`    | Compact with better context than Phi mini                  | Good middle-ground local model                  |
+| `NousResearch/Hermes-2-Pro-Mistral-7B` | Often good at structured response formats                  | Useful for action items and decisions           |
+| `CohereForAI/c4ai-command-r-v01`       | Strong long-context summarization                          | Excellent but much heavier                      |
 
 Shortlist to test:
 
-1. `mistralai/Mistral-7B-Instruct-v0.3`
-2. `meta-llama/Meta-Llama-3-8B-Instruct`
-3. `Qwen/Qwen2-7B-Instruct`
+1. `Qwen/Qwen2.5-3B-Instruct`
+2. `Qwen/Qwen2.5-7B-Instruct`
+3. `mistralai/Mistral-7B-Instruct-v0.3`
 4. `google/gemma-2-9b-it`
 
 For smaller machines or CPU-heavy workflows:
@@ -93,10 +94,10 @@ For smaller machines or CPU-heavy workflows:
 
 ## Recommended First Comparison
 
-The first model worth comparing against LFM2 is:
+The first model worth comparing against the Qwen default is:
 
 ```bash
-TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
+TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-7B-Instruct" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
@@ -129,7 +130,7 @@ Most modern instruct models support this, but some may need adjusted tokenizer/m
 
 ## Overall Recommendation
 
-Keep `LiquidAI/LFM2-2.6B-Transcript` as the baseline.
+Use `Qwen/Qwen2.5-3B-Instruct` as the baseline.
 
 For better transcription, first try:
 
@@ -137,10 +138,11 @@ For better transcription, first try:
 WHISPER_MODEL_SIZE = "small"
 ```
 
-For better summarization, first try:
+For better summarization quality, first try:
 
-```python
-LFM2_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
+```bash
+TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-7B-Instruct" \
+	python transcribe.py meeting_20260527_114300.wav
 ```
 
 Then compare both models against the same transcript before making a permanent switch.
