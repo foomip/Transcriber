@@ -1,10 +1,10 @@
 # Core transcription backend
 faster-whisper>=1.0.1
 
-# LFM2-2.6B-Transcript (meeting summarization LLM)
-# NOTE: transformers 5.2.0+ is required for LFM2 support.
+# Hugging Face analysis model (meeting summarization LLM)
+# NOTE: transformers 5.2.0+ is required for the default Qwen analysis model.
 transformers>=5.2.0
 torch
 
-# Enables device_map="auto" — lets Accelerate place LFM2 on the GPU automatically.
+# Enables device_map="auto" — lets Accelerate place the analysis model automatically.
 accelerate
