@@ -1,7 +1,7 @@
 # 🎙️ transcriber
 
 A fully **local**, **private** meeting recorder and transcription pipeline for Linux.
-Record any online meeting, transcribe it with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), and generate a structured Markdown report using [LiquidAI LFM2-2.6B-Transcript](https://huggingface.co/LiquidAI/LFM2-2.6B-Transcript) — a model purpose-built for on-device meeting summarisation. No cloud services. No API keys. Nothing leaves your machine.
+Record any online meeting, transcribe it with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), and generate a structured Markdown report using [Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct). No cloud services. No API keys. Nothing leaves your machine.
 
 ---
 
@@ -15,13 +15,13 @@ Record any online meeting, transcribe it with [Faster-Whisper](https://github.co
 │  Desktop audio +    │              │  → timestamped       │
 │  Microphone mixed   │              │    transcript (.txt) │
 │  → 16 kHz mono WAV  │              │                      │
-└─────────────────────┘              │  LFM2-2.6B-Transcript│
+└─────────────────────┘              │  Qwen2.5-3B-Instruct│
                                      │  → meeting report    │
                                      │    (.md)             │
                                      └──────────────────────┘
 ```
 
-`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. LFM2 summarisation uses PyTorch device placement, so it can use NVIDIA CUDA or AMD ROCm when the matching PyTorch build is installed.
+`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement, so it can use NVIDIA CUDA or AMD ROCm when the matching PyTorch build is installed.
 
 ---
 
@@ -45,12 +45,12 @@ sudo apt update && sudo apt install ffmpeg pulseaudio-utils python3-venv -y
 
 Installed automatically into the virtual environment during setup (see below).
 
-| Package                   | Purpose                                                                    |
-| ------------------------- | -------------------------------------------------------------------------- |
-| `faster-whisper >= 1.0.1` | CTranslate2-based Whisper inference                                        |
-| `transformers >= 5.2.0`   | Loads LFM2-2.6B-Transcript                                                 |
-| `torch`                   | PyTorch acceleration for LFM2 summarisation, including CUDA or ROCm builds |
-| `accelerate`              | Enables `device_map="auto"` for automatic GPU placement                    |
+| Package                   | Purpose                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------ |
+| `faster-whisper >= 1.0.1` | CTranslate2-based Whisper inference                                            |
+| `transformers >= 5.2.0`   | Loads the local Hugging Face analysis model, defaulting to Qwen2.5-3B-Instruct |
+| `torch`                   | PyTorch acceleration for analysis summarisation, including CUDA or ROCm builds |
+| `accelerate`              | Enables `device_map="auto"` for automatic GPU placement                        |
 
 ---
 
@@ -151,11 +151,11 @@ The script will:
 1. Detect the available transcription and summarisation backends
 2. Transcribe the audio with Faster-Whisper
 3. Save a timestamped raw transcript
-4. Load LFM2-2.6B-Transcript on CUDA, ROCm, or CPU and generate a full meeting report
+4. Load Qwen2.5-3B-Instruct on CUDA, ROCm, or CPU and generate a full meeting report
 
 Long-running phases print elapsed-time progress messages so model downloads, model loading, transcription, and summary generation do not look stalled.
 
-> **First run only:** LFM2-2.6B-Transcript (~5 GB) is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). All subsequent runs load instantly from disk.
+> **First run only:** Qwen2.5-3B-Instruct is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). All subsequent runs load from disk.
 
 ---
 
@@ -163,10 +163,10 @@ Long-running phases print elapsed-time progress messages so model downloads, mod
 
 For a recording named `meeting_20260527_114300.wav`, two files are produced alongside it:
 
-| File                                     | Contents                                                 |
-| ---------------------------------------- | -------------------------------------------------------- |
-| `meeting_20260527_114300_transcript.txt` | Raw timestamped transcript, one line per Whisper segment |
-| `meeting_20260527_114300_report.md`      | Structured Markdown report generated by LFM2             |
+| File                                     | Contents                                                   |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `meeting_20260527_114300_transcript.txt` | Raw timestamped transcript, one line per Whisper segment   |
+| `meeting_20260527_114300_report.md`      | Structured Markdown report generated by the analysis model |
 
 ### Transcript format
 
@@ -178,7 +178,7 @@ For a recording named `meeting_20260527_114300.wav`, two files are produced alon
 
 ### Report format
 
-The Markdown report contains five sections generated in one grounded LFM2 inference pass. The analysis step uses deterministic decoding and refuses to write a report if the generated text appears unrelated to the transcript:
+The Markdown report contains five sections generated in one grounded analysis-model inference pass. The analysis step uses deterministic decoding and refuses to write a report if the generated text appears unrelated to the transcript:
 
 ```markdown
 # Meeting Report
@@ -233,7 +233,7 @@ WHISPER_MODEL_SIZE = "small"   # change here
 
 ### Analysis model
 
-The default analysis model is `LiquidAI/LFM2-2.6B-Transcript`. To compare another local Hugging Face chat/instruct model without editing source, set `TRANSCRIBER_ANALYSIS_MODEL` for a single run:
+The default analysis model is `Qwen/Qwen2.5-3B-Instruct`. To compare another local Hugging Face chat/instruct model without editing source, set `TRANSCRIBER_ANALYSIS_MODEL` for a single run:
 
 ```bash
 TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
@@ -280,13 +280,13 @@ The WAV file was silent or contained only noise below Whisper's detection thresh
 
 **GPU not being used**
 
-For Faster-Whisper transcription, confirm CTranslate2 can see a CUDA device. AMD ROCm is not exposed through this Faster-Whisper path, so AMD-only systems currently transcribe on CPU and can still accelerate the LFM2 summarisation step.
+For Faster-Whisper transcription, confirm CTranslate2 can see a CUDA device. AMD ROCm is not exposed through this Faster-Whisper path, so AMD-only systems currently transcribe on CPU and can still accelerate the analysis summarisation step.
 
 ```bash
 python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"
 ```
 
-For LFM2 summarisation, confirm PyTorch can see your CUDA or ROCm device:
+For analysis summarisation, confirm PyTorch can see your CUDA or ROCm device:
 
 ```bash
 python -c "import torch; print('cuda_available=', torch.cuda.is_available()); print('hip=', getattr(torch.version, 'hip', None)); print('device=', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
@@ -294,14 +294,14 @@ python -c "import torch; print('cuda_available=', torch.cuda.is_available()); pr
 
 If `cuda_available` is `False`, your PyTorch installation may not match your CUDA or ROCm driver stack. Refer to the [PyTorch installation selector](https://pytorch.org/get-started/locally/) for the correct install command.
 
-**LFM2 download fails or is slow**
+**Analysis model download fails or is slow**
 
 The model downloads from HuggingFace Hub. If you are behind a proxy or have an unstable connection, you can pre-download it separately and it will be found in the cache automatically on the next run:
 
 ```bash
 python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
-           AutoTokenizer.from_pretrained('LiquidAI/LFM2-2.6B-Transcript'); \
-           AutoModelForCausalLM.from_pretrained('LiquidAI/LFM2-2.6B-Transcript')"
+           AutoTokenizer.from_pretrained('Qwen/Qwen2.5-3B-Instruct'); \
+           AutoModelForCausalLM.from_pretrained('Qwen/Qwen2.5-3B-Instruct')"
 ```
 
 ---
@@ -311,5 +311,5 @@ python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
 Everything runs entirely on your local machine:
 
 - **Faster-Whisper** runs the Whisper model locally via CTranslate2
-- **LFM2-2.6B-Transcript** is downloaded once and runs fully offline thereafter
+- **Qwen2.5-3B-Instruct** is downloaded once and runs fully offline thereafter
 - No audio, transcript, or report data is ever transmitted anywhere
