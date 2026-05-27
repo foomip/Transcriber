@@ -50,10 +50,17 @@ Notes:
 
 ## Analysis and Summarization Model Recommendations
 
-The current analysis model is:
+The default analysis model is:
 
 ```python
 LFM2_MODEL_ID = "LiquidAI/LFM2-2.6B-Transcript"
+```
+
+For one-off comparisons, override it without editing source:
+
+```bash
+TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
+	python transcribe.py meeting_20260527_114300.wav
 ```
 
 This is a sensible default because it is local, relatively small, and designed for transcript summarization.
@@ -88,8 +95,9 @@ For smaller machines or CPU-heavy workflows:
 
 The first model worth comparing against LFM2 is:
 
-```python
-LFM2_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
+```bash
+TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
+	python transcribe.py meeting_20260527_114300.wav
 ```
 
 Compare outputs using the same transcript and evaluate:
