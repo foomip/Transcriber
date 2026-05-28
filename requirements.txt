@@ -8,3 +8,6 @@ torch
 
 # Enables device_map="auto" — lets Accelerate place the analysis model automatically.
 accelerate
+
+# Test suite
+pytest>=8
