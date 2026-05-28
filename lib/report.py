@@ -154,6 +154,9 @@ def compile(
         f"**Source file:** `{os.path.basename(audio_path)}`  ",
         f"**Date:** {meta['date']}  ",
         f"**Duration:** {meta['duration']}  ",
+        f"**Requested language:** {meta.get('requested_language', 'Auto-detect')}  ",
+        f"**Detected language:** {meta.get('detected_language', 'Unknown')} "
+        f"({meta.get('language_probability', 'Unknown')} confidence)  ",
         "",
         "---",
         "",

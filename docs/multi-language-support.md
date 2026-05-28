@@ -46,17 +46,17 @@ The current app architecture is:
 ### What already helps
 
 - The app already uses Faster-Whisper, which supports multilingual transcription.
-- The current Whisper model is `base`, which is multilingual rather than English-only.
-- The transcript is stored as raw timestamped text, which is a good foundation for multilingual support.
+- The current Whisper model is `small`, which is multilingual rather than English-only.
+- The transcript stores language metadata plus timestamped text, which is a good foundation for multilingual support.
+- The CLI supports forced single-language transcription with `-l` / `--language` for Whisper language codes.
 
 ### Current English-centric limitations
 
 #### `lib/transcription.py`
 
-- No user-facing way to force a known language such as English, Portuguese, or Afrikaans.
 - No explicit mixed-language transcription mode.
 - Only one top-level detected language is surfaced.
-- The current default model size (`base`) may be too weak for code-switching and lower-resource language accuracy.
+- The current default model size (`small`) may still need benchmarking for code-switching and lower-resource language accuracy.
 
 #### `lib/analysis.py`
 
@@ -70,7 +70,7 @@ The current app architecture is:
 
 - Report title and section headings are English-only.
 - There is no concept of report language.
-- There is no place for detected language metadata.
+- Requested and detected transcription language metadata is surfaced, but report output language is not configurable yet.
 
 #### Documentation
 
@@ -181,6 +181,8 @@ This configuration should describe at least:
 - whether mixed-language handling is enabled
 
 #### Support forced single-language mode
+
+Status: implemented for Whisper language codes through `-l` / `--language`.
 
 If the user knows the meeting is entirely in one language, the app should be able to explicitly transcribe as:
 

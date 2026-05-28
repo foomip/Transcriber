@@ -3,7 +3,7 @@
 transcribe.py — Meeting transcription and analysis pipeline.
 
 Usage:
-  python transcribe.py <path_to_audio.wav>
+    python transcribe.py [-l LANGUAGE] <path_to_audio.wav>
 
 Pipeline:
   1. transcription.py  — detect GPU, run Faster-Whisper, produce timestamped lines
@@ -17,8 +17,74 @@ Output (written alongside the source WAV):
 
 import os
 import sys
+from argparse import ArgumentParser, Namespace
 
 from lib import analysis, report, transcription
+
+
+def parse_args(argv: list[str]) -> Namespace:
+    parser = ArgumentParser(
+        description="Transcribe a meeting recording and generate a local report."
+    )
+    parser.add_argument(
+        "audio_path",
+        help="Path to the audio file to transcribe.",
+    )
+    parser.add_argument(
+        "-l",
+        "--language",
+        help=(
+            "Optional Whisper language code to force during transcription "
+            "(for example: en, af, pt). Omit this to auto-detect."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def validate_language(language_code: str | None) -> str | None:
+    if language_code is None:
+        return None
+
+    normalized = transcription.normalize_language_code(language_code)
+    if transcription.language_description(normalized) is not None:
+        return normalized
+
+    print(f"❌  Unsupported language code: '{language_code}'")
+    print("\nSupported language codes:")
+    print(transcription.format_supported_languages())
+    sys.exit(1)
+
+
+def _language_display(language_code: str | None, description: str | None) -> str:
+    if language_code is None or description is None:
+        return "Auto-detect"
+    return f"{description} ({language_code})"
+
+
+def transcript_file_lines(
+    audio_path: str,
+    result: transcription.TranscriptionResult,
+) -> list[str]:
+    return [
+        "# Transcription metadata",
+        f"Source file: {os.path.basename(audio_path)}",
+        f"Whisper model: {result.model_size}",
+        "Requested language: "
+        + _language_display(
+            result.requested_language,
+            result.requested_language_description,
+        ),
+        "Detected language: "
+        + _language_display(
+            result.detected_language,
+            result.detected_language_description,
+        ),
+        f"Detection confidence: {result.language_probability:.0%}",
+        "",
+        "# Transcript",
+        "",
+        *result.lines,
+    ]
 
 
 def should_continue_with_analysis() -> bool:
@@ -37,7 +103,7 @@ def should_continue_with_analysis() -> bool:
         print("Please answer 'y' or 'n'.")
 
 
-def run(audio_path: str) -> None:
+def run(audio_path: str, language: str | None = None) -> None:
     if not os.path.exists(audio_path):
         print(f"❌  Error: File '{audio_path}' not found.")
         sys.exit(1)
@@ -50,16 +116,21 @@ def run(audio_path: str) -> None:
 
     # ── Step 1: Transcribe ─────────────────────────────────────────────────
     print("\n▶ Step 1/3: Transcribing audio")
-    lines = transcription.transcribe_audio(audio_path, device, compute_type)
+    result = transcription.transcribe_audio(
+        audio_path,
+        device,
+        compute_type,
+        language=language,
+    )
 
-    if not lines:
+    if not result.lines:
         print("⚠️  No speech detected in the recording. Exiting.")
         sys.exit(0)
 
     transcript_path = f"{base}_transcript.txt"
     with open(transcript_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    print(f"\n✅  Raw transcript saved → {transcript_path}")
+        f.write("\n".join(transcript_file_lines(audio_path, result)) + "\n")
+    print(f"\n✅  Transcript saved → {transcript_path}")
 
     if not should_continue_with_analysis():
         print("\nTranscript-only run complete.")
@@ -69,8 +140,18 @@ def run(audio_path: str) -> None:
     # ── Step 2: Generate summaries ─────────────────────────────────────────
     print("\n▶ Step 2/3: Generating meeting report sections")
     meta = report.parse_recording_meta(audio_path)
-    meta["duration"] = report.estimate_duration(lines)
-    transcript_body  = report.build_transcript_body(lines)
+    meta["duration"] = report.estimate_duration(result.lines)
+    meta["requested_language"] = _language_display(
+        result.requested_language,
+        result.requested_language_description,
+    )
+    meta["detected_language"] = _language_display(
+        result.detected_language,
+        result.detected_language_description,
+    )
+    meta["language_probability"] = f"{result.language_probability:.0%}"
+    meta["transcription_model"] = f"Faster-Whisper {result.model_size}"
+    transcript_body  = report.build_transcript_body(result.lines)
 
     try:
         sections = analysis.generate_summaries(transcript_body, meta)
@@ -90,8 +171,5 @@ def run(audio_path: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("💡  Usage: python transcribe.py <path_to_audio.wav>")
-        sys.exit(1)
-
-    run(sys.argv[1])
+    args = parse_args(sys.argv[1:])
+    run(args.audio_path, validate_language(args.language))
