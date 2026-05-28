@@ -19,10 +19,19 @@
 - Setup: `python3 -m venv whisper_env && source whisper_env/bin/activate && pip install -r requirements.txt`.
 - Record audio: `./record_meeting.sh [name.wav]`.
 - Transcribe and summarize: `python transcribe.py <audio.wav>`.
+- Run tests: `whisper_env/bin/python -m pytest`.
 - Quick syntax check: `python -m py_compile transcribe.py lib/*.py`.
 - After changing Python files, verify the touched files with Pylance and ensure the change adds no errors or warnings.
 - Double-check Python compilation after Python file changes, preferably with `whisper_env/bin/python -m py_compile` on the touched files or the full project command above.
 - CUDA smoke check: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"`.
+
+## Code Change Verification
+
+- Any Python code change must include accompanying relevant tests or updates to existing tests.
+- Before completion, run the relevant tests and ensure they pass; for broad changes, run the full suite with `whisper_env/bin/python -m pytest`.
+- Verify touched Python files with Pylance and ensure there are zero errors or warnings introduced by the change.
+- Compile touched Python files with `whisper_env/bin/python -m py_compile <changed_files>`; for broad changes, use `whisper_env/bin/python -m py_compile transcribe.py lib/*.py tests/*.py`.
+- Tests should mock Whisper, HuggingFace, GPU, filesystem, and audio boundaries unless the user explicitly asks for a real integration run.
 
 ## Conventions And Pitfalls
 
