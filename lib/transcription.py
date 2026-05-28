@@ -19,7 +19,7 @@ from faster_whisper.transcribe import Segment, TranscriptionInfo
 from lib.progress import ProgressTimer
 
 # Swap for "small" / "medium" / "large-v3" to trade speed for accuracy.
-WHISPER_MODEL_SIZE = "base"
+WHISPER_MODEL_SIZE = "small"
 
 
 class WhisperTranscriber(Protocol):
