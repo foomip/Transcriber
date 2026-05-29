@@ -9,5 +9,8 @@ torch
 # Enables device_map="auto" — lets Accelerate place the analysis model automatically.
 accelerate
 
+# YouTube transcript fetching (no API key required)
+youtube-transcript-api
+
 # Test suite
 pytest>=8

@@ -76,6 +76,7 @@ def test_should_continue_with_analysis_accepts_no_after_invalid_answer(monkeypat
 def test_run_writes_transcript_only_when_analysis_is_declined(tmp_path, monkeypatch):
     audio_path = tmp_path / "meeting_20260528_0930.wav"
     audio_path.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
 
     monkeypatch.setattr(transcribe.transcription, "detect_device", lambda: ("cpu", "int8"))
     monkeypatch.setattr(
@@ -87,15 +88,16 @@ def test_run_writes_transcript_only_when_analysis_is_declined(tmp_path, monkeypa
 
     transcribe.run(str(audio_path), language="en")
 
-    transcript_path = tmp_path / "meeting_20260528_0930_transcript.txt"
+    transcript_path = tmp_path / "output" / "meeting_20260528_0930_transcript.txt"
     assert transcript_path.exists()
     assert "# Transcript" in transcript_path.read_text(encoding="utf-8")
-    assert not (tmp_path / "meeting_20260528_0930_report.md").exists()
+    assert not (tmp_path / "output" / "meeting_20260528_0930_report.md").exists()
 
 
 def test_run_writes_report_for_full_mocked_pipeline(tmp_path, monkeypatch):
     audio_path = tmp_path / "meeting_20260528_0930.wav"
     audio_path.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
     calls = SimpleNamespace(transcript_body=None, meta=None)
 
     def fake_generate_summaries(transcript_body, meta):
@@ -116,7 +118,7 @@ def test_run_writes_report_for_full_mocked_pipeline(tmp_path, monkeypatch):
 
     assert calls.transcript_body == "Hello team"
     assert calls.meta["duration"] == "1 minute"
-    report_path = tmp_path / "meeting_20260528_0930_report.md"
+    report_path = tmp_path / "output" / "meeting_20260528_0930_report.md"
     assert report_path.exists()
     assert "The team said hello." in report_path.read_text(encoding="utf-8")
 

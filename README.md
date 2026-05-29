@@ -1,7 +1,7 @@
 # 🎙️ transcriber
 
-A fully **local**, **private** meeting recorder and transcription pipeline for Linux.
-Record any online meeting, transcribe it with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), and generate a structured Markdown report using [Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct). No cloud services. No API keys. Nothing leaves your machine.
+A fully **local**, **private** meeting recorder, transcription, and summarization pipeline for Linux.
+Record any online meeting **or** point it at a YouTube video — transcribe with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) or fetch YouTube's built-in captions, then generate a structured Markdown report using [Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct). No cloud services. No API keys. Nothing leaves your machine.
 
 ## Table of Contents
 
@@ -10,7 +10,8 @@ Record any online meeting, transcribe it with [Faster-Whisper](https://github.co
   - [System packages](#system-packages)
   - [Python packages](#python-packages)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
+- [Quick Start — Meeting Recording](#quick-start--meeting-recording)
+- [Quick Start — YouTube Summarization](#quick-start--youtube-summarization)
 - [Output Files](#output-files)
   - [Transcript format](#transcript-format)
   - [Report format](#report-format)
@@ -27,19 +28,37 @@ Record any online meeting, transcribe it with [Faster-Whisper](https://github.co
 
 ## How It Works
 
+**Meeting recording path**
+
 ```
-┌─────────────────────┐     WAV      ┌──────────────────────┐     TXT + MD
-│  record_meeting.sh  │ ──────────▶  │    transcribe.py     │ ─────────────▶  output files
+┌─────────────────────┐     WAV      ┌──────────────────────┐
+│  record_meeting.sh  │ ──────────▶  │    transcribe.py     │
 │                     │              │                      │
 │  PipeWire / FFmpeg  │              │  Faster-Whisper      │
 │  Desktop audio +    │              │  → timestamped       │
 │  Microphone mixed   │              │    transcript (.txt) │
-│  → 16 kHz mono WAV  │              │                      │
-└─────────────────────┘              │  Qwen2.5-3B-Instruct│
+│  → 16 kHz mono WAV  │              │                      │  TXT + MD
+└─────────────────────┘              │  Qwen2.5-3B-Instruct │ ──────────▶  output/
                                      │  → meeting report    │
                                      │    (.md)             │
                                      └──────────────────────┘
 ```
+
+**YouTube summarization path**
+
+```
+┌─────────────────────┐  transcript  ┌──────────────────────┐
+│ youtube-summarize   │ ──────────▶  │  lib/analysis.py     │
+│       .py           │              │                      │
+│  YouTube oEmbed API │              │  Qwen2.5-3B-Instruct │  TXT + MD
+│  → title / metadata │              │  → video summary     │ ──────────▶  output/
+│                     │              │    report (.md)      │
+│  youtube-transcript │              └──────────────────────┘
+│  -api → captions    │
+└─────────────────────┘
+```
+
+Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path — only the text transcript is fetched from YouTube's public subtitle endpoint.
 
 `transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement, so it can use NVIDIA CUDA or AMD ROCm when the matching PyTorch build is installed.
 
@@ -71,6 +90,7 @@ Installed automatically into the virtual environment during setup (see below).
 | `transformers >= 5.2.0`   | Loads the local Hugging Face analysis model, defaulting to Qwen2.5-3B-Instruct |
 | `torch`                   | PyTorch acceleration for analysis summarisation, including CUDA or ROCm builds |
 | `accelerate`              | Enables `device_map="auto"` for automatic GPU placement                        |
+| `youtube-transcript-api`  | Fetches YouTube captions/subtitles without an API key or headless browser      |
 
 ---
 
@@ -127,7 +147,7 @@ After copying `.envrc.example` to `.envrc`, no further configuration is needed.
 
 ---
 
-## Quick Start
+## Quick Start — Meeting Recording
 
 You will need **two terminal windows** open side by side.
 
@@ -186,16 +206,72 @@ Long-running phases print elapsed-time progress messages so model downloads, mod
 
 ---
 
+## Quick Start — YouTube Summarization
+
+Pass any YouTube URL to `youtube-summarize.py`. No recording or audio download is needed — the script fetches YouTube's existing captions.
+
+```bash
+source whisper_env/bin/activate   # skip if using direnv
+python youtube-summarize.py https://www.youtube.com/watch?v=XmpKPs9Emx0
+```
+
+To specify a preferred transcript language and guide the summary output language, use `-l` or `--language` with the same language codes accepted by `transcribe.py`:
+
+```bash
+python youtube-summarize.py -l en https://www.youtube.com/watch?v=XmpKPs9Emx0
+python youtube-summarize.py --language=de https://youtu.be/XmpKPs9Emx0
+python youtube-summarize.py https://youtu.be/XmpKPs9Emx0 -l en
+```
+
+All three URL formats are accepted:
+
+```bash
+# Full watch URL
+python youtube-summarize.py https://www.youtube.com/watch?v=XmpKPs9Emx0
+
+# Short URL
+python youtube-summarize.py https://youtu.be/XmpKPs9Emx0
+
+# Bare 11-character video ID
+python youtube-summarize.py XmpKPs9Emx0
+```
+
+The script will:
+
+1. Extract the video ID and fetch the video title from YouTube's oEmbed API
+2. Fetch the YouTube transcript (manual captions preferred; auto-generated as fallback)
+3. Save a timestamped transcript file
+4. Load Qwen2.5-3B-Instruct locally and generate a Video Summary Report
+
+If the requested language transcript is not available, the script falls back to the first available transcript with a clear warning rather than failing.
+
+> **First run only:** the analysis model download applies here too — see the note above.
+
+---
+
 ## Output Files
 
-For a recording named `meeting_20260527_114300.wav`, two files are produced alongside it:
+All generated files are written into an `output/` subdirectory created automatically in the current working directory.
 
-| File                                     | Contents                                                   |
-| ---------------------------------------- | ---------------------------------------------------------- |
-| `meeting_20260527_114300_transcript.txt` | Language metadata plus one timestamped line per segment    |
-| `meeting_20260527_114300_report.md`      | Structured Markdown report generated by the analysis model |
+### Meeting recording outputs
 
-### Transcript format
+For a recording named `meeting_20260527_114300.wav`:
+
+| File                                            | Contents                                                   |
+| ----------------------------------------------- | ---------------------------------------------------------- |
+| `output/meeting_20260527_114300_transcript.txt` | Language metadata plus one timestamped line per segment    |
+| `output/meeting_20260527_114300_report.md`      | Structured Markdown report generated by the analysis model |
+
+### YouTube outputs
+
+For a video with ID `XmpKPs9Emx0`:
+
+| File                                  | Contents                                                        |
+| ------------------------------------- | --------------------------------------------------------------- |
+| `output/XmpKPs9Emx0_transcript.txt`   | YouTube metadata header plus one timestamped line per caption   |
+| `output/XmpKPs9Emx0_report.md`        | Video Summary Report generated by the local analysis model      |
+
+### Transcript format — meeting recording
 
 ```
 # Transcription metadata
@@ -212,9 +288,29 @@ Detection confidence: 97%
 [01:02:03.45 -> 01:02:08.90]  Agreed — let's get that merged by end of week.
 ```
 
+### Transcript format — YouTube
+
+```
+# Transcription metadata
+Source: YouTube
+Video ID: XmpKPs9Emx0
+Title: Example Video Title
+URL: https://www.youtube.com/watch?v=XmpKPs9Emx0
+Requested language: English (en)
+Transcript language: English (en)
+Transcript type: auto-generated
+
+# Transcript
+
+[00:00:04.50 -> 00:00:12.30]  Example caption segment.
+[00:00:12.80 -> 00:00:21.10]  Another caption line here.
+```
+
 ### Report format
 
-The Markdown report contains five sections generated in one grounded analysis-model inference pass. The analysis step uses deterministic decoding and refuses to write a report if the generated text appears unrelated to the transcript:
+Both pipelines produce the same five-section Markdown report. The analysis step uses deterministic decoding and refuses to write a report if the generated text appears unrelated to the transcript.
+
+**Meeting report header:**
 
 ```markdown
 # Meeting Report
@@ -224,7 +320,23 @@ The Markdown report contains five sections generated in one grounded analysis-mo
 **Duration:** 1 hour, 2 minutes
 **Requested language:** English (en)
 **Detected language:** English (en) (97% confidence)
+```
 
+**YouTube report header:**
+
+```markdown
+# Video Summary Report
+
+**Source:** `Example Video Title — youtube.com/watch?v=XmpKPs9Emx0`
+**Date:** Unknown
+**Duration:** 12 minutes
+**Requested language:** English (en)
+**Detected language:** English (en)
+```
+
+Both report types then continue with the same five sections:
+
+```markdown
 ---
 
 ## Executive Summary
@@ -254,7 +366,9 @@ The Markdown report contains five sections generated in one grounded analysis-mo
 
 ### Transcription language
 
-By default, Faster-Whisper auto-detects the spoken language. For known single-language recordings, pass a Whisper language code to force transcription in that language:
+Both scripts share the same `-l` / `--language` flag and the same set of supported language codes.
+
+**`transcribe.py`** — forces Faster-Whisper to transcribe in the given language:
 
 ```bash
 python transcribe.py -l en meeting_20260527_114300.wav
@@ -262,7 +376,14 @@ python transcribe.py --language=en meeting_20260527_114300.wav
 python transcribe.py --language en meeting_20260527_114300.wav
 ```
 
-Invalid codes fail before model loading and print the full supported language-code list sorted alphabetically by language name.
+**`youtube-summarize.py`** — prefers the matching YouTube transcript language and guides the summary output language:
+
+```bash
+python youtube-summarize.py -l en https://www.youtube.com/watch?v=XmpKPs9Emx0
+python youtube-summarize.py --language=de https://youtu.be/XmpKPs9Emx0
+```
+
+If the requested language transcript is not available on YouTube, the script falls back to the first available transcript with a warning and continues. Invalid codes exit before any network requests and print the full supported language-code list sorted alphabetically by language name.
 
 Common examples:
 
@@ -384,8 +505,15 @@ whisper_env/bin/python -m pip uninstall -y torchvision
 
 ## Privacy
 
-Everything runs entirely on your local machine:
+**Meeting recording path** — everything runs entirely on your local machine:
 
 - **Faster-Whisper** runs the Whisper model locally via CTranslate2
 - **Qwen2.5-3B-Instruct** is downloaded once and runs fully offline thereafter
 - No audio, transcript, or report data is ever transmitted anywhere
+
+**YouTube summarization path** — two outbound requests are made:
+
+- The video title is fetched from YouTube's public [oEmbed endpoint](https://www.youtube.com/oembed) (a single lightweight JSON request, no authentication)
+- The transcript text is fetched from YouTube's public subtitle endpoint via [`youtube-transcript-api`](https://github.com/jdepoix/youtube-transcript-api)
+
+No audio or video is downloaded. No local transcript or report data is uploaded. All analysis and summarization runs locally on your machine exactly as it does for meeting recordings.

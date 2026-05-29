@@ -70,3 +70,42 @@ def test_compile_includes_metadata_and_sections():
     assert "**Detected language:** English (en) (94% confidence)" in markdown
     assert "## Executive Summary" in markdown
     assert "A useful summary." in markdown
+
+
+def test_compile_uses_custom_report_title_and_source_label():
+    meta = {
+        "date": "Unknown",
+        "duration": "8 minutes",
+        "requested_language": "English (en)",
+        "detected_language": "English (en)",
+        "language_probability": "",
+    }
+    sections = [("## Executive Summary", "Great talk.")]
+
+    markdown = report.compile(
+        meta,
+        sections,
+        report_title="Video Summary Report",
+        source_label="My Video — youtube.com/watch?v=abc12345678",
+    )
+
+    assert "# Video Summary Report" in markdown
+    assert "# Meeting Report" not in markdown
+    assert "**Source:** `My Video — youtube.com/watch?v=abc12345678`" in markdown
+    assert "**Source file:**" not in markdown
+
+
+def test_compile_omits_confidence_suffix_when_language_probability_is_empty():
+    meta = {
+        "date": "Unknown",
+        "duration": "5 minutes",
+        "requested_language": "Auto-select",
+        "detected_language": "German (de)",
+        "language_probability": "",
+    }
+    sections = []
+
+    markdown = report.compile(meta, sections)
+
+    assert "**Detected language:** German (de)" in markdown
+    assert "confidence" not in markdown

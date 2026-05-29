@@ -108,8 +108,6 @@ def run(audio_path: str, language: str | None = None) -> None:
         print(f"❌  Error: File '{audio_path}' not found.")
         sys.exit(1)
 
-    base = os.path.splitext(audio_path)[0]
-
     print("─" * 56)
     print("  🔎  Detecting compute device...")
     device, compute_type = transcription.detect_device()
@@ -127,7 +125,10 @@ def run(audio_path: str, language: str | None = None) -> None:
         print("⚠️  No speech detected in the recording. Exiting.")
         sys.exit(0)
 
-    transcript_path = f"{base}_transcript.txt"
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(audio_path))[0]
+    transcript_path = os.path.join(output_dir, f"{stem}_transcript.txt")
     with open(transcript_path, "w", encoding="utf-8") as f:
         f.write("\n".join(transcript_file_lines(audio_path, result)) + "\n")
     print(f"\n✅  Transcript saved → {transcript_path}")
@@ -163,7 +164,7 @@ def run(audio_path: str, language: str | None = None) -> None:
     # ── Step 3: Compile and save Markdown report ───────────────────────────
     print("\n▶ Step 3/3: Saving Markdown report")
     report_md   = report.compile(meta, sections, audio_path)
-    report_path = f"{base}_report.md"
+    report_path = os.path.join(output_dir, f"{stem}_report.md")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report_md)
     print(f"\n📋  Meeting report saved → {report_path}")

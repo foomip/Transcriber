@@ -24,3 +24,7 @@ lib/__pycache__/
 
 # direnv
 .direnv/
+
+# output directory for generated files
+output/*
+!output/.keep

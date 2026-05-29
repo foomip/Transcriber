@@ -142,21 +142,43 @@ def build_transcript_body(lines: list[str]) -> str:
 def compile(
     meta: dict[str, str],
     sections: list[tuple[str, str]],
-    audio_path: str,
+    audio_path: str = "",
+    *,
+    report_title: str = "Meeting Report",
+    source_label: str | None = None,
 ) -> str:
     """
     Assemble the final Markdown report from metadata and the generated
     (heading, text) section pairs returned by analysis.generate_summaries().
+
+    audio_path is used to derive the source label when source_label is not
+    provided (the existing meeting-recording path).  Pass source_label
+    explicitly from non-audio callers such as youtube-summarize.py.
+
+    report_title overrides the top-level Markdown heading so YouTube reports
+    can use "Video Summary Report" while meeting reports keep "Meeting Report".
     """
+    effective_source = (
+        source_label if source_label is not None else os.path.basename(audio_path)
+    )
+    source_key = "Source" if source_label is not None else "Source file"
+
+    lang_prob = meta.get("language_probability", "")
+    detected_lang_line = (
+        f"**Detected language:** {meta.get('detected_language', 'Unknown')} "
+        f"({lang_prob} confidence)  "
+        if lang_prob
+        else f"**Detected language:** {meta.get('detected_language', 'Unknown')}  "
+    )
+
     lines: list[str] = [
-        "# Meeting Report",
+        f"# {report_title}",
         "",
-        f"**Source file:** `{os.path.basename(audio_path)}`  ",
+        f"**{source_key}:** `{effective_source}`  ",
         f"**Date:** {meta['date']}  ",
         f"**Duration:** {meta['duration']}  ",
         f"**Requested language:** {meta.get('requested_language', 'Auto-detect')}  ",
-        f"**Detected language:** {meta.get('detected_language', 'Unknown')} "
-        f"({meta.get('language_probability', 'Unknown')} confidence)  ",
+        detected_lang_line,
         "",
         "---",
         "",
