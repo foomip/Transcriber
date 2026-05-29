@@ -18,7 +18,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from lib.progress import ProgressTimer
 
-DEFAULT_ANALYSIS_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+DEFAULT_ANALYSIS_MODEL_ID = "google/gemma-4-E4B-it"
 ANALYSIS_MODEL_ID = os.environ.get("TRANSCRIBER_ANALYSIS_MODEL", DEFAULT_ANALYSIS_MODEL_ID)
 ANALYSIS_SYSTEM_PROMPT = (
     "You are an expert meeting analyst. Analyze the transcript carefully "
@@ -26,7 +26,7 @@ ANALYSIS_SYSTEM_PROMPT = (
     "Do not invent facts, names, dates, events, decisions, or background details. "
     "If the transcript does not contain information for a requested section, say so explicitly."
 )
-ANALYSIS_MAX_NEW_TOKENS = 2048
+ANALYSIS_MAX_NEW_TOKENS = 4096
 GROUNDING_MIN_RATIO = 0.16
 GROUNDING_MIN_TOP_TERM_OVERLAP = 2
 
