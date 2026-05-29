@@ -47,11 +47,13 @@ def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatc
     assert backend.name == "cpu"
     assert backend.device_name == "CPU"
     assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
+    assert "AVX-512 BF16" in backend.notes[0]
 
 
-def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32(monkeypatch):
+def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_sufficient(monkeypatch):
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
+    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 64 * analysis._GIB)
 
     backend = analysis.detect_analysis_backend()
 
@@ -61,6 +63,21 @@ def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32(monkeypatc
         "device_map": "auto",
         "torch_dtype": analysis.torch.float32,
     }
+    assert "float32" in backend.notes[0]
+    assert "lacks" in backend.notes[0]
+
+
+def test_detect_analysis_backend_cpu_without_avx512_bf16_falls_back_to_bf16_when_insufficient_ram(monkeypatch):
+    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
+    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 16 * analysis._GIB)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.name == "cpu"
+    assert backend.device_name == "CPU"
+    assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
+    assert "falling back" in backend.notes[0]
 
 
 def test_cpu_supports_avx512_bf16_returns_true_when_flag_present(tmp_path, monkeypatch):
@@ -83,6 +100,20 @@ def test_cpu_supports_avx512_bf16_returns_false_when_file_missing(monkeypatch):
     monkeypatch.setattr(analysis, "_CPUINFO_PATH", "/nonexistent/cpuinfo")
 
     assert analysis._cpu_supports_avx512_bf16() is False
+
+
+def test_available_ram_bytes_returns_value_from_meminfo(tmp_path, monkeypatch):
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:       131815760 kB\nMemAvailable:   65536000 kB\n")
+    monkeypatch.setattr(analysis, "_MEMINFO_PATH", str(meminfo))
+
+    assert analysis._available_ram_bytes() == 65536000 * 1024
+
+
+def test_available_ram_bytes_returns_none_when_file_missing(monkeypatch):
+    monkeypatch.setattr(analysis, "_MEMINFO_PATH", "/nonexistent/meminfo")
+
+    assert analysis._available_ram_bytes() is None
 
 
 def test_build_user_message_includes_sections_metadata_and_transcript():
