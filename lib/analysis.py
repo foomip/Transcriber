@@ -102,6 +102,26 @@ class AnalysisBackend:
     model_kwargs: dict[str, Any]
 
 
+_CPUINFO_PATH = "/proc/cpuinfo"
+
+
+def _cpu_supports_avx512_bf16() -> bool:
+    """Return True if the CPU advertises avx512_bf16 in /proc/cpuinfo.
+
+    AVX-512 BF16 is required for native bfloat16 matmuls on x86.  Without it,
+    PyTorch silently upcasts every BF16 operand to float32 before each matmul
+    and casts back, adding overhead with no quality benefit.
+    """
+    try:
+        with open(_CPUINFO_PATH, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("flags") and "avx512_bf16" in line.split():
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def detect_analysis_backend() -> AnalysisBackend:
     """Return the best PyTorch backend for summarization."""
     hip_version = getattr(torch.version, "hip", None)
@@ -122,12 +142,22 @@ def detect_analysis_backend() -> AnalysisBackend:
             },
         )
 
+    # No GPU — check whether the CPU natively supports BF16 matmuls via
+    # AVX-512 BF16.  Without that instruction set, PyTorch silently upcasts
+    # every BF16 operand to float32 before each matmul then casts back, adding
+    # overhead with no quality benefit.  Loading in float32 directly uses the
+    # faster native AVX2 float32 path instead.
+    # Trade-off: float32 uses ~2× the RAM of BF16 (~30 GB vs ~15 GB).
+    cpu_dtype: str | torch.dtype = (
+        "auto" if _cpu_supports_avx512_bf16() else torch.float32
+    )
+
     return AnalysisBackend(
         name="cpu",
         device_name="CPU",
         model_kwargs={
             "device_map": "auto",
-            "torch_dtype": "auto",
+            "torch_dtype": cpu_dtype,
         },
     )
 
@@ -282,6 +312,13 @@ def generate_summaries(
         print(f"  ✅ CUDA GPU detected for summarization: {backend.device_name}")
     else:
         print("  ℹ️  No PyTorch GPU detected for summarization — using CPU")
+        if backend.model_kwargs.get("torch_dtype") is torch.float32:
+            print(
+                "  ⚠️  CPU does not support AVX-512 BF16 — loading model in float32\n"
+                "      (avoids BF16→float32 upcast overhead; uses ~30 GB RAM)"
+            )
+        else:
+            print("  ℹ️  CPU supports AVX-512 BF16 — loading model in BF16 (~15 GB RAM)")
 
     tokenizer_factory: Any = AutoTokenizer
     model_factory: Any = AutoModelForCausalLM

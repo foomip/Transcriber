@@ -38,13 +38,51 @@ def test_detect_analysis_backend_reports_rocm(monkeypatch):
     assert backend.device_name == "ROCm GPU"
 
 
-def test_detect_analysis_backend_reports_cpu(monkeypatch):
+def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatch):
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: True)
 
     backend = analysis.detect_analysis_backend()
 
     assert backend.name == "cpu"
     assert backend.device_name == "CPU"
+    assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
+
+
+def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32(monkeypatch):
+    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.name == "cpu"
+    assert backend.device_name == "CPU"
+    assert backend.model_kwargs == {
+        "device_map": "auto",
+        "torch_dtype": analysis.torch.float32,
+    }
+
+
+def test_cpu_supports_avx512_bf16_returns_true_when_flag_present(tmp_path, monkeypatch):
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu avx2 avx512f avx512_bf16 sse4_2\n")
+    monkeypatch.setattr(analysis, "_CPUINFO_PATH", str(cpuinfo))
+
+    assert analysis._cpu_supports_avx512_bf16() is True
+
+
+def test_cpu_supports_avx512_bf16_returns_false_when_flag_absent(tmp_path, monkeypatch):
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu avx2 avx512f sse4_2\n")
+    monkeypatch.setattr(analysis, "_CPUINFO_PATH", str(cpuinfo))
+
+    assert analysis._cpu_supports_avx512_bf16() is False
+
+
+def test_cpu_supports_avx512_bf16_returns_false_when_file_missing(monkeypatch):
+    monkeypatch.setattr(analysis, "_CPUINFO_PATH", "/nonexistent/cpuinfo")
+
+    assert analysis._cpu_supports_avx512_bf16() is False
 
 
 def test_build_user_message_includes_sections_metadata_and_transcript():
