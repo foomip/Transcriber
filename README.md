@@ -190,6 +190,8 @@ Then build any variant you want to use:
 docker build -f Dockerfile.cpu -t transcriber:cpu .
 docker build -f Dockerfile.nvidia -t transcriber:nvidia .
 docker build -f Dockerfile.rocm-llama -t transcriber:rocm-llama .
+> **Deprecated:** `Dockerfile.rocm` uses the old PyTorch/Transformers ROCm path, which is unreliable on many consumer AMD cards. Use `transcriber:rocm-llama` instead.
+
 docker build -f Dockerfile.rocm -t transcriber:rocm .
 docker build -f Dockerfile.intel -t transcriber:intel .
 ```
@@ -237,6 +239,8 @@ FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 
 # Force a specific image
 ./docker-run-transcribe.sh --image transcriber:rocm-llama meeting_20260527_114300.wav
+> **Deprecated:** `transcriber:rocm` uses the old PyTorch/Transformers ROCm path. Use `--image transcriber:rocm-llama` instead.
+
 ./docker-run-transcribe.sh --image transcriber:rocm meeting_20260527_114300.wav
 
 # Forward normal transcribe.py flags unchanged
@@ -547,7 +551,9 @@ WHISPER_MODEL_SIZE = "small"   # change here
 
 The default analysis model is backend-specific: CPU/CUDA/Intel use `google/gemma-4-E4B-it`, while ROCm Docker runs use the Gemma 4 E4B GGUF model through llama.cpp.
 
-Gemma 4 is the higher-quality default analysis model, but the PyTorch/Transformers ROCm offload path is unreliable on many consumer AMD cards. The ROCm Docker default therefore uses llama.cpp with a Gemma 4 E4B GGUF file, where GPU-layer offload is explicit and can be adjusted from a safe VRAM budget.
+Gemma 4 is the higher-quality default analysis model. For AMD GPUs, **use `transcriber:rocm-llama`** — it runs Gemma 4 E4B GGUF through llama.cpp with explicit GPU-layer offload and a conservative VRAM budget.
+
+The older PyTorch/Transformers ROCm path (`Dockerfile.rocm`, `transcriber:rocm`) is **deprecated**. It relies on CPU↔GPU weight offloading that triggers memory access faults on many consumer AMD cards. If you still need it, the image remains available but will emit a deprecation warning at runtime.
 
 For ROCm llama.cpp runs, the default GGUF file is downloaded on first use into `~/.cache/transcriber/gguf/gemma-4-E4B-it-Q4_K_M.gguf`. To use another local GGUF file, point to it explicitly:
 

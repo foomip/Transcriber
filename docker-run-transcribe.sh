@@ -478,6 +478,12 @@ esac
 
 ensure_image "$selected_image"
 
+if [ "$selected_backend" = "rocm" ]; then
+    echo "⚠️  DEPRECATED: transcriber:rocm uses the old PyTorch/Transformers ROCm path."
+    echo "   This image is deprecated and will be removed in a future release."
+    echo "   Use --image transcriber:rocm-llama instead for AMD GPU analysis."
+fi
+
 echo "▶ Running transcribe.py in Docker"
 echo "   Image   : $selected_image"
 echo "   Backend : $selected_backend"

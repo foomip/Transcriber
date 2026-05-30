@@ -76,8 +76,9 @@ def test_detect_analysis_backend_reports_rocm(monkeypatch):
         "attn_implementation": analysis.ROCM_ATTENTION_IMPLEMENTATION,
     }
     assert "ROCm analysis model" in backend.notes[0]
-    assert "fully on GPU" in backend.notes[1]
-    assert "float16 with eager attention" in backend.notes[2]
+    assert "DEPRECATED" in backend.notes[1]
+    assert "fully on GPU" in backend.notes[2]
+    assert "float16 with eager attention" in backend.notes[3]
 
 
 def test_detect_analysis_backend_respects_model_override_on_rocm(monkeypatch):
@@ -99,6 +100,7 @@ def test_detect_analysis_backend_respects_model_override_on_rocm(monkeypatch):
         "attn_implementation": analysis.ROCM_ATTENTION_IMPLEMENTATION,
     }
     assert "Using TRANSCRIBER_ANALYSIS_MODEL=custom/model" in backend.notes[0]
+    assert "DEPRECATED" in backend.notes[1]
 
 
 def test_detect_analysis_backend_prefers_llama_cpp_on_rocm_when_available(tmp_path, monkeypatch):

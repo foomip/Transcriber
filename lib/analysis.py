@@ -487,6 +487,7 @@ def _rocm_transformers_analysis_backend(
             "attn_implementation": ROCM_ATTENTION_IMPLEMENTATION,
         },
         notes=model_notes + (
+            "⚠️ DEPRECATED: PyTorch/Transformers ROCm path is deprecated. Use transcriber:rocm-llama instead.",
             "ROCm loads the analysis model fully on GPU to avoid CPU/GPU offload faults",
             "ROCm uses float16 with eager attention for generation stability",
         ),
@@ -540,6 +541,11 @@ def detect_analysis_backend() -> AnalysisBackend:
             ):
                 return _rocm_llama_cpp_analysis_backend(device_name)
 
+            print(
+                "  ⚠️ DEPRECATED: Using the old PyTorch/Transformers ROCm path."
+                " This backend is deprecated and will be removed in a future release."
+                " Use transcriber:rocm-llama (llama.cpp/GGUF) instead for AMD GPUs."
+            )
             return _rocm_transformers_analysis_backend(device_name, model_id, model_notes)
 
         model_kwargs: dict[str, Any] = {
