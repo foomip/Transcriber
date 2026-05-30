@@ -4,7 +4,8 @@ FROM rocm/pytorch:latest
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HSA_ENABLE_SDMA=0
 
 # System packages (base image may already have some; we add for safety)
 RUN apt-get update && apt-get install -y --no-install-recommends \

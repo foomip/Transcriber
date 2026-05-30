@@ -224,8 +224,42 @@ def test_wrapper_manual_rocm_image_uses_rocm_device_groups_without_rebuilding(tm
     assert build_calls == []
     assert "transcriber:rocm" in run_call
     assert "--device" in run_call
+    assert "HSA_ENABLE_SDMA=0" in run_call
     assert str(kfd_path) in run_call
     assert str(dri_dir) in run_call
     assert "--group-add" in run_call
     assert str(kfd_path.stat().st_gid) in run_call
     assert str((dri_dir / "renderD128").stat().st_gid) in run_call
+
+
+def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
+    env, log_path = _make_env(tmp_path, existing_images="transcriber:rocm")
+
+    env.update(
+        {
+            "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB": "6",
+            "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB": "9",
+            "TRANSCRIBER_ANALYSIS_MODEL": "test/model",
+            "TRANSCRIBER_MAX_TRANSCRIPT_CHARS": "28000",
+        }
+    )
+
+    audio_path = tmp_path / "meeting.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH), "--image", "transcriber:rocm", str(audio_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    run_call = _find_first_call(_read_calls(log_path), "run")
+
+    assert "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB=6" in run_call
+    assert "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB=9" in run_call
+    assert "TRANSCRIBER_ANALYSIS_MODEL=test/model" in run_call
+    assert "TRANSCRIBER_MAX_TRANSCRIPT_CHARS=28000" in run_call

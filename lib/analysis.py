@@ -13,16 +13,14 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-# Set before importing torch so the CUDA/HIP allocator sees it during startup.
-os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from lib.progress import ProgressTimer
 
+ANALYSIS_MODEL_ENV = "TRANSCRIBER_ANALYSIS_MODEL"
 DEFAULT_ANALYSIS_MODEL_ID = "google/gemma-4-E4B-it"
-ANALYSIS_MODEL_ID = os.environ.get("TRANSCRIBER_ANALYSIS_MODEL", DEFAULT_ANALYSIS_MODEL_ID)
+DEFAULT_ROCM_ANALYSIS_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 ANALYSIS_SYSTEM_PROMPT = (
     "You are an expert meeting analyst. Analyze the transcript carefully "
     "and provide clear, accurate information based only on the transcript. "
@@ -30,6 +28,7 @@ ANALYSIS_SYSTEM_PROMPT = (
     "If the transcript does not contain information for a requested section, say so explicitly."
 )
 ANALYSIS_MAX_NEW_TOKENS = 4096
+ROCM_ANALYSIS_MAX_NEW_TOKENS = 1024
 GROUNDING_MIN_RATIO = 0.16
 GROUNDING_MIN_TOP_TERM_OVERLAP = 2
 
@@ -79,6 +78,8 @@ class AnalysisModelError(RuntimeError):
 class ChatTokenizer(Protocol):
     eos_token_id: int | None
 
+    def __call__(self, text: str, *, return_tensors: str) -> Any: ...
+
     def apply_chat_template(
         self,
         conversation: list[dict[str, str]],
@@ -102,6 +103,7 @@ class GenerativeModel(Protocol):
 class AnalysisBackend:
     name: str
     device_name: str
+    model_id: str
     model_kwargs: dict[str, Any]
     notes: tuple[str, ...] = ()
 
@@ -114,6 +116,20 @@ DEFAULT_GPU_HEADROOM_GIB = 7
 CPU_OFFLOAD_HEADROOM_GIB = 8
 GPU_HEADROOM_ENV = "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB"
 GPU_MAX_MEMORY_ENV = "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB"
+ROCM_ATTENTION_IMPLEMENTATION = "eager"
+
+
+def _analysis_model_id(backend_name: str) -> tuple[str, tuple[str, ...]]:
+    configured_model = os.environ.get(ANALYSIS_MODEL_ENV)
+    if configured_model:
+        return configured_model, (f"Using {ANALYSIS_MODEL_ENV}={configured_model}",)
+
+    if backend_name == "rocm":
+        return DEFAULT_ROCM_ANALYSIS_MODEL_ID, (
+            f"Using ROCm analysis model {DEFAULT_ROCM_ANALYSIS_MODEL_ID}",
+        )
+
+    return DEFAULT_ANALYSIS_MODEL_ID, ()
 
 
 def _available_ram_bytes() -> int | None:
@@ -197,6 +213,55 @@ def _cpu_supports_avx512_bf16() -> bool:
     return False
 
 
+def _cpu_analysis_backend() -> AnalysisBackend:
+    model_id, model_notes = _analysis_model_id("cpu")
+
+    if _cpu_supports_avx512_bf16():
+        return AnalysisBackend(
+            name="cpu",
+            device_name="CPU",
+            model_id=model_id,
+            model_kwargs={
+                "device_map": "auto",
+                "torch_dtype": "auto",
+            },
+            notes=model_notes + (
+                "CPU supports AVX-512 BF16 — loading in BF16 (~15 GB RAM)",
+            ),
+        )
+
+    available_gib = (_available_ram_bytes() or 0) / _GIB
+    if available_gib >= FLOAT32_MIN_RAM_GIB:
+        return AnalysisBackend(
+            name="cpu",
+            device_name="CPU",
+            model_id=model_id,
+            model_kwargs={
+                "device_map": "auto",
+                "torch_dtype": torch.float32,
+            },
+            notes=model_notes + (
+                f"CPU lacks AVX-512 BF16; {available_gib:.0f} GB RAM available"
+                f" — loading in float32 for native AVX2 matmuls (~30 GB RAM)",
+            ),
+        )
+
+    return AnalysisBackend(
+        name="cpu",
+        device_name="CPU",
+        model_id=model_id,
+        model_kwargs={
+            "device_map": "auto",
+            "torch_dtype": "auto",
+        },
+        notes=model_notes + (
+            f"CPU lacks AVX-512 BF16 and only {available_gib:.0f} GB RAM available"
+            f" (need {FLOAT32_MIN_RAM_GIB} GB for float32)"
+            f" — falling back to BF16 (~15 GB RAM)",
+        ),
+    )
+
+
 def detect_analysis_backend() -> AnalysisBackend:
     """Return the best PyTorch backend for summarization."""
     hip_version = getattr(torch.version, "hip", None)
@@ -208,6 +273,24 @@ def detect_analysis_backend() -> AnalysisBackend:
             device_name = "GPU"
 
         backend_name = "rocm" if hip_version else "cuda"
+        model_id, model_notes = _analysis_model_id(backend_name)
+
+        if backend_name == "rocm":
+            return AnalysisBackend(
+                name=backend_name,
+                device_name=device_name,
+                model_id=model_id,
+                model_kwargs={
+                    "device_map": {"": "cuda"},
+                    "torch_dtype": torch.float16,
+                    "attn_implementation": ROCM_ATTENTION_IMPLEMENTATION,
+                },
+                notes=model_notes + (
+                    "ROCm loads the analysis model fully on GPU to avoid CPU/GPU offload faults",
+                    "ROCm uses float16 with eager attention for generation stability",
+                ),
+            )
+
         model_kwargs: dict[str, Any] = {
             "device_map": "auto",
             "torch_dtype": "auto",
@@ -219,8 +302,9 @@ def detect_analysis_backend() -> AnalysisBackend:
         return AnalysisBackend(
             name=backend_name,
             device_name=device_name,
+            model_id=model_id,
             model_kwargs=model_kwargs,
-            notes=notes,
+            notes=model_notes + notes,
         )
 
     # No GPU — determine the best dtype for CPU inference.
@@ -228,36 +312,7 @@ def detect_analysis_backend() -> AnalysisBackend:
     # each matmul then casts back — overhead with no quality benefit.  Loading
     # in float32 avoids that and uses the faster native AVX2 float32 path, but
     # only when enough RAM is available (~30 GB for weights + headroom).
-    if _cpu_supports_avx512_bf16():
-        return AnalysisBackend(
-            name="cpu",
-            device_name="CPU",
-            model_kwargs={"device_map": "auto", "torch_dtype": "auto"},
-            notes=("CPU supports AVX-512 BF16 — loading in BF16 (~15 GB RAM)",),
-        )
-
-    available_gib = (_available_ram_bytes() or 0) / _GIB
-    if available_gib >= FLOAT32_MIN_RAM_GIB:
-        return AnalysisBackend(
-            name="cpu",
-            device_name="CPU",
-            model_kwargs={"device_map": "auto", "torch_dtype": torch.float32},
-            notes=(
-                f"CPU lacks AVX-512 BF16; {available_gib:.0f} GB RAM available"
-                f" — loading in float32 for native AVX2 matmuls (~30 GB RAM)",
-            ),
-        )
-
-    return AnalysisBackend(
-        name="cpu",
-        device_name="CPU",
-        model_kwargs={"device_map": "auto", "torch_dtype": "auto"},
-        notes=(
-            f"CPU lacks AVX-512 BF16 and only {available_gib:.0f} GB RAM available"
-            f" (need {FLOAT32_MIN_RAM_GIB} GB for float32)"
-            f" — falling back to BF16 (~15 GB RAM)",
-        ),
-    )
+    return _cpu_analysis_backend()
 
 
 def _build_user_message(
@@ -301,6 +356,24 @@ def _build_user_message(
     )
 
 
+def _build_compact_user_message(
+    transcript_body: str,
+    _meta: dict[str, str],
+) -> str:
+    return (
+        "You are an expert meeting analyst. Use only the transcript. "
+        "Do not invent facts. Return a Markdown report with these exact headings:\n"
+        "## Executive Summary\n"
+        "## Detailed Summary\n"
+        "## Action Items\n"
+        "## Key Decisions\n"
+        "## Topics Discussed\n"
+        "If a section has no explicit information, say none was explicitly stated.\n\n"
+        "Transcript:\n"
+        f"{transcript_body}"
+    )
+
+
 def _content_words(text: str) -> list[str]:
     return [
         token
@@ -339,7 +412,7 @@ def _validate_grounding(generated_report: str, transcript_body: str) -> None:
 def _parse_report_sections(generated_report: str) -> list[tuple[str, str]]:
     headings = [heading for heading, _ in SUMMARY_TASKS]
     pattern = re.compile(
-        r"(?m)^(## (?:"
+        r"(?m)^\s*(## (?:"
         + "|".join(re.escape(heading.removeprefix("## ")) for heading in headings)
         + r"))\s*$"
     )
@@ -364,20 +437,26 @@ def _query(
     model: GenerativeModel,
     tokenizer: ChatTokenizer,
     user_message: str,
+    *,
+    max_new_tokens: int = ANALYSIS_MAX_NEW_TOKENS,
+    use_plain_prompt: bool = False,
 ) -> str:
     """Run a single analysis-model forward pass and return only the generated text."""
-    messages = [
-        {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-        {"role": "user",   "content": user_message},
-    ]
-    inputs = tokenizer.apply_chat_template(
-        messages, return_tensors="pt", return_dict=True
-    ).to(model.device)
+    if use_plain_prompt:
+        inputs = tokenizer(user_message, return_tensors="pt").to(model.device)
+    else:
+        messages = [
+            {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
+        ]
+        inputs = tokenizer.apply_chat_template(
+            messages, return_tensors="pt", return_dict=True
+        ).to(model.device)
 
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
-            max_new_tokens=ANALYSIS_MAX_NEW_TOKENS,
+            max_new_tokens=max_new_tokens,
             do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
@@ -400,10 +479,9 @@ def generate_summaries(
     device_map="auto" lets HuggingFace Accelerate place the model on the
     best available PyTorch backend. ROCm GPUs appear through torch.cuda.
     """
-    print(f"\n🤖 Loading {ANALYSIS_MODEL_ID}...")
-    print("   (First run downloads model files to the HuggingFace cache.)\n")
-
     backend = detect_analysis_backend()
+    print(f"\n🤖 Loading {backend.model_id}...")
+    print("   (First run downloads model files to the HuggingFace cache.)\n")
     if backend.name == "rocm":
         print(f"  ✅ ROCm GPU detected for summarization: {backend.device_name}")
         for note in backend.notes:
@@ -413,7 +491,7 @@ def generate_summaries(
         for note in backend.notes:
             print(f"  ℹ️  {note}")
     else:
-        print("  ℹ️  No PyTorch GPU detected for summarization — using CPU")
+        print("  ℹ️  Using CPU for summarization")
         for note in backend.notes:
             icon = "⚠️ " if "lacks" in note else "ℹ️ "
             print(f"  {icon} {note}")
@@ -426,10 +504,10 @@ def generate_summaries(
         done_message="Tokenizer loaded",
     ):
         try:
-            tokenizer = cast(ChatTokenizer, tokenizer_factory.from_pretrained(ANALYSIS_MODEL_ID))
+            tokenizer = cast(ChatTokenizer, tokenizer_factory.from_pretrained(backend.model_id))
         except Exception as exc:
             raise AnalysisModelError(
-                f"Could not load tokenizer for {ANALYSIS_MODEL_ID}: {exc}"
+                f"Could not load tokenizer for {backend.model_id}: {exc}"
             ) from exc
 
     with ProgressTimer(
@@ -438,27 +516,43 @@ def generate_summaries(
     ):
         try:
             model = cast(GenerativeModel, model_factory.from_pretrained(
-                ANALYSIS_MODEL_ID,
+                backend.model_id,
                 **backend.model_kwargs,
             ))
         except Exception as exc:
             raise AnalysisModelError(
-                f"Could not load analysis model {ANALYSIS_MODEL_ID}: {exc}"
+                f"Could not load analysis model {backend.model_id}: {exc}"
             ) from exc
     model.eval()
 
-    user_msg = _build_user_message(transcript_body, meta)
+    use_rocm_prompt = backend.name == "rocm"
+    user_msg = (
+        _build_compact_user_message(transcript_body, meta)
+        if use_rocm_prompt
+        else _build_user_message(transcript_body, meta)
+    )
+    max_new_tokens = (
+        ROCM_ANALYSIS_MAX_NEW_TOKENS
+        if backend.name == "rocm"
+        else ANALYSIS_MAX_NEW_TOKENS
+    )
     with ProgressTimer(
         "  Generating meeting summary report...",
         done_message="Generated meeting summary report",
     ):
         try:
-            generated_report = _query(model, tokenizer, user_msg)
+            generated_report = _query(
+                model,
+                tokenizer,
+                user_msg,
+                max_new_tokens=max_new_tokens,
+                use_plain_prompt=use_rocm_prompt,
+            )
         except torch.OutOfMemoryError as exc:
             raise AnalysisModelError(
                 "Analysis model ran out of GPU memory during generation. "
-                f"Try increasing {GPU_HEADROOM_ENV} or lowering {GPU_MAX_MEMORY_ENV} "
-                "to force more of the model onto CPU."
+                "Try lowering TRANSCRIBER_MAX_TRANSCRIPT_CHARS or setting "
+                f"{ANALYSIS_MODEL_ENV} to a smaller local model."
             ) from exc
 
     _validate_grounding(generated_report, transcript_body)

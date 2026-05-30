@@ -16,6 +16,7 @@ BASE_META = {
 
 
 def test_detect_analysis_backend_reports_cuda(monkeypatch):
+    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "CUDA GPU")
     monkeypatch.setattr(
@@ -29,10 +30,12 @@ def test_detect_analysis_backend_reports_cuda(monkeypatch):
 
     assert backend.name == "cuda"
     assert backend.device_name == "CUDA GPU"
+    assert backend.model_id == analysis.DEFAULT_ANALYSIS_MODEL_ID
     assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
 
 
 def test_detect_analysis_backend_reports_rocm(monkeypatch):
+    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.delenv(analysis.GPU_HEADROOM_ENV, raising=False)
     monkeypatch.delenv(analysis.GPU_MAX_MEMORY_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
@@ -49,33 +52,36 @@ def test_detect_analysis_backend_reports_rocm(monkeypatch):
 
     assert backend.name == "rocm"
     assert backend.device_name == "ROCm GPU"
+    assert backend.model_id == analysis.DEFAULT_ROCM_ANALYSIS_MODEL_ID
     assert backend.model_kwargs == {
-        "device_map": "auto",
-        "torch_dtype": "auto",
-        "max_memory": {0: "9GiB", "cpu": "56GiB"},
+        "device_map": {"": "cuda"},
+        "torch_dtype": analysis.torch.float16,
+        "attn_implementation": analysis.ROCM_ATTENTION_IMPLEMENTATION,
     }
-    assert "GPU memory capped at 9GiB" in backend.notes[0]
+    assert "ROCm analysis model" in backend.notes[0]
+    assert "fully on GPU" in backend.notes[1]
+    assert "float16 with eager attention" in backend.notes[2]
 
 
-def test_detect_analysis_backend_respects_gpu_max_memory_override(monkeypatch):
-    monkeypatch.setenv(analysis.GPU_MAX_MEMORY_ENV, "6")
+def test_detect_analysis_backend_respects_model_override_on_rocm(monkeypatch):
+    monkeypatch.setenv(analysis.ANALYSIS_MODEL_ENV, "custom/model")
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (16 * analysis._GIB, 16 * analysis._GIB),
-    )
     monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
-    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: None)
 
     backend = analysis.detect_analysis_backend()
 
-    assert backend.model_kwargs["max_memory"] == {0: "6GiB"}
-    assert f"using {analysis.GPU_MAX_MEMORY_ENV}=6 GiB" in backend.notes[0]
+    assert backend.model_id == "custom/model"
+    assert backend.model_kwargs == {
+        "device_map": {"": "cuda"},
+        "torch_dtype": analysis.torch.float16,
+        "attn_implementation": analysis.ROCM_ATTENTION_IMPLEMENTATION,
+    }
+    assert "Using TRANSCRIBER_ANALYSIS_MODEL=custom/model" in backend.notes[0]
 
 
 def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatch):
+    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: True)
 
@@ -83,11 +89,13 @@ def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatc
 
     assert backend.name == "cpu"
     assert backend.device_name == "CPU"
+    assert backend.model_id == analysis.DEFAULT_ANALYSIS_MODEL_ID
     assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
     assert "AVX-512 BF16" in backend.notes[0]
 
 
 def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_sufficient(monkeypatch):
+    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
     monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 64 * analysis._GIB)
@@ -96,6 +104,7 @@ def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_s
 
     assert backend.name == "cpu"
     assert backend.device_name == "CPU"
+    assert backend.model_id == analysis.DEFAULT_ANALYSIS_MODEL_ID
     assert backend.model_kwargs == {
         "device_map": "auto",
         "torch_dtype": analysis.torch.float32,
@@ -105,6 +114,7 @@ def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_s
 
 
 def test_detect_analysis_backend_cpu_without_avx512_bf16_falls_back_to_bf16_when_insufficient_ram(monkeypatch):
+    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
     monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 16 * analysis._GIB)
@@ -165,6 +175,17 @@ def test_build_user_message_includes_sections_metadata_and_transcript():
     assert "Apollo roadmap and budget discussion" in message
 
 
+def test_build_compact_user_message_includes_sections_metadata_and_transcript():
+    message = analysis._build_compact_user_message(
+        "Apollo roadmap and budget discussion",
+        BASE_META,
+    )
+
+    for heading, _instruction in analysis.SUMMARY_TASKS:
+        assert heading in message
+    assert "Apollo roadmap and budget discussion" in message
+
+
 def test_content_words_filters_stop_words_and_short_tokens():
     words = analysis._content_words("This is a short demo about Apollo budgets, UX, and releases.")
 
@@ -194,7 +215,7 @@ def test_validate_grounding_rejects_unrelated_report():
 
 def test_parse_report_sections_returns_expected_order_and_missing_fallback():
     generated = """
-## Executive Summary
+ ## Executive Summary
 The team reviewed the Apollo budget.
 
 ## Action Items

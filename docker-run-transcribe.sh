@@ -118,6 +118,15 @@ add_device_group() {
     fi
 }
 
+pass_env_if_set() {
+    local name
+    name="$1"
+
+    if [ "${!name+x}" ]; then
+        run_flags+=(-e "$name=${!name}")
+    fi
+}
+
 backend_for_known_image() {
     case "$1" in
         transcriber:cpu|transcriber:latest)
@@ -381,11 +390,17 @@ run_flags=(
 )
 runtime_group_ids=()
 
+pass_env_if_set TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB
+pass_env_if_set TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB
+pass_env_if_set TRANSCRIBER_ANALYSIS_MODEL
+pass_env_if_set TRANSCRIBER_MAX_TRANSCRIPT_CHARS
+
 case "$selected_backend" in
     nvidia)
         run_flags+=(--gpus all)
         ;;
     rocm)
+        run_flags+=(-e "HSA_ENABLE_SDMA=${HSA_ENABLE_SDMA:-0}")
         run_flags+=(--device "$DEV_KFD_PATH")
         add_device_group "$DEV_KFD_PATH"
         if [ -e "$DRI_DIR" ]; then

@@ -1,7 +1,7 @@
 # 🎙️ transcriber
 
 A fully **local**, **private** meeting recorder, transcription, and summarization pipeline for Linux.
-Record any online meeting **or** point it at a YouTube video — transcribe with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) or fetch YouTube's built-in captions, then generate a structured Markdown report using [Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct). No cloud services. No API keys. Nothing leaves your machine.
+Record any online meeting **or** point it at a YouTube video — transcribe with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) or fetch YouTube's built-in captions, then generate a structured Markdown report using a local Hugging Face analysis model. No cloud services. No API keys. Nothing leaves your machine.
 
 ## Table of Contents
 
@@ -43,7 +43,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 │  Desktop audio +    │              │  → timestamped       │
 │  Microphone mixed   │              │    transcript (.txt) │
 │  → 16 kHz mono WAV  │              │                      │  TXT + MD
-└─────────────────────┘              │  Qwen2.5-3B-Instruct │ ──────────▶  output/
+└─────────────────────┘              │  Analysis model      │ ──────────▶  output/
                                      │  → meeting report    │
                                      │    (.md)             │
                                      └──────────────────────┘
@@ -55,7 +55,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 ┌─────────────────────┐  transcript  ┌──────────────────────┐
 │ youtube-summarize   │ ──────────▶  │  lib/analysis.py     │
 │       .py           │              │                      │
-│  YouTube oEmbed API │              │  Qwen2.5-3B-Instruct │  TXT + MD
+│  YouTube oEmbed API │              │  Analysis model      │  TXT + MD
 │  → title / metadata │              │  → video summary     │ ──────────▶  output/
 │                     │              │    report (.md)      │
 │  youtube-transcript │              └──────────────────────┘
@@ -65,7 +65,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 
 Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path — only the text transcript is fetched from YouTube's public subtitle endpoint.
 
-`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement, so it can use NVIDIA CUDA or AMD ROCm when the matching PyTorch build is installed.
+`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement, so it can use NVIDIA CUDA or AMD ROCm when the matching PyTorch build is installed. ROCm summarisation uses Qwen2.5-3B-Instruct fully on the GPU by default.
 
 ---
 
@@ -92,7 +92,7 @@ Installed automatically into the virtual environment during setup (see below).
 | Package                   | Purpose                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------ |
 | `faster-whisper >= 1.0.1` | CTranslate2-based Whisper inference                                            |
-| `transformers >= 5.2.0`   | Loads the local Hugging Face analysis model, defaulting to Qwen2.5-3B-Instruct |
+| `transformers >= 5.2.0`   | Loads the local Hugging Face analysis model selected for the active backend    |
 | `torch`                   | PyTorch acceleration for analysis summarisation, including CUDA or ROCm builds |
 | `accelerate`              | Enables `device_map="auto"` for automatic GPU placement                        |
 | `youtube-transcript-api`  | Fetches YouTube captions/subtitles without an API key or headless browser      |
@@ -213,6 +213,8 @@ Then run it against a recorded WAV file:
 
 The wrapper automatically prefers backends in this order: **NVIDIA → ROCm → Intel → CPU**.
 
+For ROCm runs, the wrapper passes `/dev/kfd`, `/dev/dri`, the required device owner groups, and `HSA_ENABLE_SDMA=0` so AMD GPU analysis runs by default on RDNA cards that otherwise fault during model transfers or generation.
+
 Useful overrides:
 
 ```bash
@@ -314,11 +316,11 @@ The script will:
 1. Detect the available transcription and summarisation backends
 2. Transcribe the audio with Faster-Whisper
 3. Save a transcript with language metadata and timestamped segments
-4. Load Qwen2.5-3B-Instruct on CUDA, ROCm, or CPU and generate a full meeting report
+4. Load the configured analysis model and generate a full meeting report; ROCm uses Qwen2.5-3B-Instruct on the AMD GPU by default
 
 Long-running phases print elapsed-time progress messages so model downloads, model loading, transcription, and summary generation do not look stalled.
 
-> **First run only:** Qwen2.5-3B-Instruct is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). All subsequent runs load from disk.
+> **First run only:** the selected analysis model is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). ROCm defaults to Qwen2.5-3B-Instruct. All subsequent runs load from disk.
 
 ---
 
@@ -357,7 +359,7 @@ The script will:
 1. Extract the video ID and fetch the video title from YouTube's oEmbed API
 2. Fetch the YouTube transcript (manual captions preferred; auto-generated as fallback)
 3. Save a timestamped transcript file
-4. Load Qwen2.5-3B-Instruct locally and generate a Video Summary Report
+4. Load the configured analysis model locally and generate a Video Summary Report
 
 If the requested language transcript is not available, the script falls back to the first available transcript with a clear warning rather than failing.
 
@@ -528,7 +530,7 @@ WHISPER_MODEL_SIZE = "small"   # change here
 
 ### Analysis model
 
-The default analysis model is `Qwen/Qwen2.5-3B-Instruct`. To compare another local Hugging Face chat/instruct model without editing source, set `TRANSCRIBER_ANALYSIS_MODEL` for a single run:
+The default analysis model is backend-specific: CPU/CUDA use `google/gemma-4-E4B-it`, while ROCm uses `Qwen/Qwen2.5-3B-Instruct` fully on the AMD GPU. To compare another local Hugging Face chat/instruct model without editing source, set `TRANSCRIBER_ANALYSIS_MODEL` for a single run:
 
 ```bash
 TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
@@ -610,7 +612,7 @@ docker run --rm --entrypoint python transcriber:rocm -c "import torch; print(tor
 
 **Analysis model download fails or is slow**
 
-The model downloads from HuggingFace Hub. If you are behind a proxy or have an unstable connection, you can pre-download it separately and it will be found in the cache automatically on the next run:
+The model downloads from HuggingFace Hub. If you are behind a proxy or have an unstable connection, you can pre-download it separately and it will be found in the cache automatically on the next run. For the ROCm default model:
 
 ```bash
 python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
@@ -618,7 +620,7 @@ python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
            AutoModelForCausalLM.from_pretrained('Qwen/Qwen2.5-3B-Instruct')"
 ```
 
-**`torchvision::nms` error while loading Qwen**
+**`torchvision::nms` error while loading the analysis model**
 
 This app does not use torchvision. If Transformers tries to import a mismatched torchvision build, model loading can fail with `RuntimeError: operator torchvision::nms does not exist`. Remove the stray package from the virtual environment:
 
@@ -633,7 +635,7 @@ whisper_env/bin/python -m pip uninstall -y torchvision
 **Meeting recording path** — everything runs entirely on your local machine:
 
 - **Faster-Whisper** runs the Whisper model locally via CTranslate2
-- **Qwen2.5-3B-Instruct** is downloaded once and runs fully offline thereafter
+- The selected analysis model is downloaded once and runs fully offline thereafter
 - No audio, transcript, or report data is ever transmitted anywhere
 
 **YouTube summarization path** — two outbound requests are made:
