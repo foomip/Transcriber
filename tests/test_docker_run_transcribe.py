@@ -86,6 +86,16 @@ esac
 SIMPLE_SUCCESS_COMMAND = "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
 
 
+ROCMINFO_WITH_TARGETS_COMMAND = """#!/usr/bin/env bash
+set -euo pipefail
+cat <<'EOF'
+    Name:                    gfx1030
+    Name:                    gfx1030
+    Name:                    gfx1100
+EOF
+"""
+
+
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -232,6 +242,89 @@ def test_wrapper_manual_rocm_image_uses_rocm_device_groups_without_rebuilding(tm
     assert str((dri_dir / "renderD128").stat().st_gid) in run_call
 
 
+def test_wrapper_auto_selects_rocm_llama_image_for_rocm_hosts(tmp_path):
+    env, log_path = _make_env(tmp_path)
+    _write_executable(tmp_path / "bin" / "rocminfo", SIMPLE_SUCCESS_COMMAND)
+
+    kfd_path = tmp_path / "kfd"
+    kfd_path.write_text("", encoding="utf-8")
+    dri_dir = tmp_path / "dri"
+    dri_dir.mkdir()
+    (dri_dir / "renderD128").write_text("", encoding="utf-8")
+
+    env.update(
+        {
+            "TRANSCRIBER_DEV_KFD_PATH": str(kfd_path),
+            "TRANSCRIBER_DRI_DIR": str(dri_dir),
+            "TRANSCRIBER_GGUF_CACHE_DIR": str(tmp_path / "gguf-cache"),
+        }
+    )
+
+    audio_path = tmp_path / "meeting.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH), str(audio_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    calls = _read_calls(log_path)
+    build_calls = _find_all_calls(calls, "build")
+    run_call = _find_first_call(calls, "run")
+
+    assert any(call[:5] == ["build", "-f", str(SCRIPT_PATH.parent / "Dockerfile.rocm-llama"), "-t", "transcriber:rocm-llama"] for call in build_calls)
+    assert "transcriber:rocm-llama" in run_call
+    assert "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp" in run_call
+    assert "TRANSCRIBER_GGUF_CACHE_DIR=/cache/transcriber/gguf" in run_call
+    assert f"{(tmp_path / 'gguf-cache')}:/cache/transcriber/gguf" in run_call
+    assert "HSA_ENABLE_SDMA=0" in run_call
+    assert str(kfd_path) in run_call
+    assert str(dri_dir) in run_call
+
+
+def test_wrapper_passes_detected_rocm_targets_to_rocm_llama_build(tmp_path):
+    env, log_path = _make_env(tmp_path)
+    _write_executable(tmp_path / "bin" / "rocminfo", ROCMINFO_WITH_TARGETS_COMMAND)
+
+    kfd_path = tmp_path / "kfd"
+    kfd_path.write_text("", encoding="utf-8")
+    dri_dir = tmp_path / "dri"
+    dri_dir.mkdir()
+    (dri_dir / "renderD128").write_text("", encoding="utf-8")
+
+    env.update(
+        {
+            "TRANSCRIBER_DEV_KFD_PATH": str(kfd_path),
+            "TRANSCRIBER_DRI_DIR": str(dri_dir),
+        }
+    )
+
+    audio_path = tmp_path / "meeting.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT_PATH), str(audio_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    build_call = next(
+        call for call in _find_all_calls(_read_calls(log_path), "build") if "transcriber:rocm-llama" in call
+    )
+
+    assert "--build-arg" in build_call
+    assert "AMDGPU_TARGETS=gfx1030;gfx1100" in build_call
+
+
 def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
     env, log_path = _make_env(tmp_path, existing_images="transcriber:rocm")
 
@@ -239,7 +332,15 @@ def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
         {
             "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB": "6",
             "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB": "9",
+            "TRANSCRIBER_ANALYSIS_BACKEND": "llama_cpp",
             "TRANSCRIBER_ANALYSIS_MODEL": "test/model",
+            "TRANSCRIBER_LLAMA_CPP_MODEL_PATH": "/models/test.gguf",
+            "TRANSCRIBER_LLAMA_CPP_MODEL_REPO": "test/repo-GGUF",
+            "TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE": "8192",
+            "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE": "128",
+            "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS": "24",
+            "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB": "4",
+            "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT": "36",
             "TRANSCRIBER_MAX_TRANSCRIPT_CHARS": "28000",
         }
     )
@@ -261,5 +362,13 @@ def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
 
     assert "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB=6" in run_call
     assert "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB=9" in run_call
+    assert "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp" in run_call
     assert "TRANSCRIBER_ANALYSIS_MODEL=test/model" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_MODEL_PATH=/models/test.gguf" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_MODEL_REPO=test/repo-GGUF" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE=8192" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE=128" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS=24" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB=4" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT=36" in run_call
     assert "TRANSCRIBER_MAX_TRANSCRIPT_CHARS=28000" in run_call

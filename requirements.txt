@@ -4,6 +4,7 @@ faster-whisper>=1.0.1
 # Hugging Face analysis model (meeting summarization LLM)
 # NOTE: transformers 5.2.0+ is required for the default Qwen analysis model.
 transformers>=5.2.0
+huggingface-hub
 torch
 
 # Enables device_map="auto" — lets Accelerate place the analysis model automatically.

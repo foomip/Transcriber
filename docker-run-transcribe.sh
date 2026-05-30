@@ -6,6 +6,7 @@ REPO_ROOT="${TRANSCRIBER_REPO_ROOT:-$SCRIPT_DIR}"
 DOCKER_BIN="${TRANSCRIBER_DOCKER_BIN:-docker}"
 OUTPUT_DIR="${TRANSCRIBER_OUTPUT_DIR:-$REPO_ROOT/output}"
 HF_CACHE_DIR="${TRANSCRIBER_HF_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}"
+GGUF_CACHE_DIR="${TRANSCRIBER_GGUF_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/transcriber/gguf}"
 DEV_KFD_PATH="${TRANSCRIBER_DEV_KFD_PATH:-/dev/kfd}"
 DRI_DIR="${TRANSCRIBER_DRI_DIR:-/dev/dri}"
 DRM_VENDOR_GLOB="${TRANSCRIBER_DRM_VENDOR_GLOB:-/sys/class/drm/*/device/vendor}"
@@ -27,12 +28,14 @@ Examples:
   ./docker-run-transcribe.sh meeting.wav
   ./docker-run-transcribe.sh --force-cpu meeting.wav
   ./docker-run-transcribe.sh --image transcriber:rocm meeting.wav -l en
+    ./docker-run-transcribe.sh --image transcriber:rocm-llama meeting.wav -l en
   FORCE_CPU=1 ./docker-run-transcribe.sh meeting.wav
 
 Notes:
   - Audio capture still happens on the host via record_meeting.sh.
   - Results are written to ./output in the repository root.
   - HuggingFace cache is mounted from ~/.cache/huggingface by default.
+    - GGUF cache for the ROCm llama.cpp backend is mounted from ~/.cache/transcriber/gguf by default.
   - All other arguments are forwarded to transcribe.py unchanged.
 EOF
 }
@@ -138,6 +141,9 @@ backend_for_known_image() {
         transcriber:rocm)
             echo "rocm"
             ;;
+        transcriber:rocm-llama)
+            echo "rocm-llama"
+            ;;
         transcriber:intel)
             echo "intel"
             ;;
@@ -155,7 +161,14 @@ backend_for_image_hint() {
             echo "nvidia"
             ;;
         *rocm*|*amd*)
-            echo "rocm"
+            case "$image" in
+                *llama*|*gguf*)
+                    echo "rocm-llama"
+                    ;;
+                *)
+                    echo "rocm"
+                    ;;
+            esac
             ;;
         *intel*|*xpu*)
             echo "intel"
@@ -180,6 +193,9 @@ image_for_backend() {
         rocm)
             echo "transcriber:rocm"
             ;;
+        rocm-llama)
+            echo "transcriber:rocm-llama"
+            ;;
         intel)
             echo "transcriber:intel"
             ;;
@@ -203,6 +219,9 @@ dockerfile_for_backend() {
         rocm)
             echo "$REPO_ROOT/Dockerfile.rocm"
             ;;
+        rocm-llama)
+            echo "$REPO_ROOT/Dockerfile.rocm-llama"
+            ;;
         intel)
             echo "$REPO_ROOT/Dockerfile.intel"
             ;;
@@ -216,8 +235,26 @@ image_exists() {
     "$DOCKER_BIN" image inspect "$1" >/dev/null 2>&1
 }
 
+detect_rocm_amdgpu_targets() {
+    local targets
+
+    if [ -n "${AMDGPU_TARGETS:-}" ]; then
+        echo "$AMDGPU_TARGETS"
+        return 0
+    fi
+
+    if ! command -v rocminfo >/dev/null 2>&1; then
+        return 1
+    fi
+
+    targets="$(rocminfo 2>/dev/null | awk '/^[[:space:]]*Name:[[:space:]]*gfx[0-9a-z]+/ { print $2 }' | sort -u | paste -sd';' -)"
+    [ -n "$targets" ] || return 1
+    echo "$targets"
+}
+
 build_image() {
-    local backend image dockerfile
+    local backend image dockerfile rocm_targets
+    local build_args=()
     backend="$1"
     image="$2"
     dockerfile="$(dockerfile_for_backend "$backend")"
@@ -227,7 +264,11 @@ build_image() {
     fi
 
     echo "🐳  Building $image from $(basename "$dockerfile")"
-    "$DOCKER_BIN" build -f "$dockerfile" -t "$image" "$REPO_ROOT"
+    if [ "$backend" = "rocm-llama" ] && rocm_targets="$(detect_rocm_amdgpu_targets)"; then
+        echo "   AMDGPU_TARGETS: $rocm_targets"
+        build_args+=(--build-arg "AMDGPU_TARGETS=$rocm_targets")
+    fi
+    "$DOCKER_BIN" build "${build_args[@]}" -f "$dockerfile" -t "$image" "$REPO_ROOT"
 }
 
 ensure_image() {
@@ -248,7 +289,7 @@ ensure_image() {
         return
     fi
 
-    die "Docker image '$image' was not found and cannot be auto-built. Build it manually or use one of: transcriber:cpu, transcriber:nvidia, transcriber:rocm, transcriber:intel."
+    die "Docker image '$image' was not found and cannot be auto-built. Build it manually or use one of: transcriber:cpu, transcriber:nvidia, transcriber:rocm-llama, transcriber:rocm, transcriber:intel."
 }
 
 select_backend() {
@@ -260,7 +301,7 @@ select_backend() {
     if has_nvidia; then
         echo "nvidia"
     elif has_rocm; then
-        echo "rocm"
+        echo "rocm-llama"
     elif has_intel; then
         echo "intel"
     else
@@ -361,7 +402,7 @@ else
     selected_image="$(image_for_backend "$selected_backend")"
 fi
 
-mkdir -p "$OUTPUT_DIR" "$HF_CACHE_DIR"
+mkdir -p "$OUTPUT_DIR" "$HF_CACHE_DIR" "$GGUF_CACHE_DIR"
 
 audio_mount=()
 container_args=("${forwarded_args[@]}")
@@ -385,21 +426,34 @@ run_flags=(
     --user "$(id -u):$(id -g)"
     -e HF_HOME=/cache/huggingface
     -e XDG_CACHE_HOME=/cache
+    -e TRANSCRIBER_GGUF_CACHE_DIR=/cache/transcriber/gguf
     -v "$OUTPUT_DIR:/app/output"
     -v "$HF_CACHE_DIR:/cache/huggingface"
+    -v "$GGUF_CACHE_DIR:/cache/transcriber/gguf"
 )
 runtime_group_ids=()
 
 pass_env_if_set TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB
 pass_env_if_set TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB
+pass_env_if_set TRANSCRIBER_ANALYSIS_BACKEND
 pass_env_if_set TRANSCRIBER_ANALYSIS_MODEL
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_MODEL_PATH
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_MODEL_REPO
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_BATCH_SIZE
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_GPU_LAYERS
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB
+pass_env_if_set TRANSCRIBER_LLAMA_CPP_LAYER_COUNT
 pass_env_if_set TRANSCRIBER_MAX_TRANSCRIPT_CHARS
 
 case "$selected_backend" in
     nvidia)
         run_flags+=(--gpus all)
         ;;
-    rocm)
+    rocm|rocm-llama)
+        if [ "$selected_backend" = "rocm-llama" ] && [ ! "${TRANSCRIBER_ANALYSIS_BACKEND+x}" ]; then
+            run_flags+=(-e "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp")
+        fi
         run_flags+=(-e "HSA_ENABLE_SDMA=${HSA_ENABLE_SDMA:-0}")
         run_flags+=(--device "$DEV_KFD_PATH")
         add_device_group "$DEV_KFD_PATH"

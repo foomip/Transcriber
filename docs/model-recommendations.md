@@ -3,7 +3,7 @@
 This project has two separate model stages:
 
 1. **Transcription**: speech-to-text, currently handled by Faster-Whisper in `lib/transcription.py`.
-2. **Analysis and summarization**: transcript-to-report generation, currently handled by `google/gemma-4-E4B-it` in `lib/analysis.py`.
+2. **Analysis and summarization**: transcript-to-report generation, handled by a Hugging Face/PyTorch model on CPU, NVIDIA, and Intel, and by llama.cpp with GGUF models for the default AMD ROCm Docker path.
 
 ## Transcription Model Recommendations
 
@@ -46,11 +46,11 @@ Notes:
 
 - Faster-Whisper uses CTranslate2 for inference.
 - In this project, CUDA acceleration is available for Faster-Whisper when CTranslate2 detects an NVIDIA GPU.
-- AMD ROCm is currently useful for the summarization step through PyTorch, but Faster-Whisper falls back to CPU in the current implementation.
+- AMD ROCm is currently useful for the summarization step through the Docker llama.cpp/GGUF backend, but Faster-Whisper falls back to CPU in the current implementation.
 
 ## Analysis and Summarization Model Recommendations
 
-The default analysis model is:
+The default Hugging Face analysis model is:
 
 ```python
 DEFAULT_ANALYSIS_MODEL_ID = "google/gemma-4-E4B-it"
@@ -63,7 +63,30 @@ TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
-This is the current default because it provides excellent reasoning and instruction-following while remaining practical for local deployment.
+This is the current default for CPU, NVIDIA CUDA, and Intel paths because it provides excellent reasoning and instruction-following while remaining practical for local deployment.
+
+AMD ROCm Docker runs use a separate llama.cpp/GGUF backend by default. The default GGUF filename is:
+
+```text
+Qwen2.5-3B-Instruct-Q4_K_M.gguf
+```
+
+It downloads on first use into the GGUF cache used by the wrapper:
+
+```text
+~/.cache/transcriber/gguf/Qwen2.5-3B-Instruct-Q4_K_M.gguf
+```
+
+or point directly at another local GGUF file:
+
+```bash
+TRANSCRIBER_LLAMA_CPP_MODEL_PATH="/path/to/model.gguf" \
+	./docker-run-transcribe.sh meeting_20260527_114300.wav
+```
+
+The default download source is `bartowski/Qwen2.5-3B-Instruct-GGUF`. If you want the same filename from a different Hugging Face GGUF repository, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
+
+The ROCm llama.cpp backend computes a conservative `n_gpu_layers` value at runtime from available VRAM, model file size, context size, and configured headroom. It then leaves the remaining layers in system RAM, which is safer on consumer AMD cards than relying on Transformers device offload.
 
 Transcript prompt size is capped dynamically from available RAM. For repeatable model comparisons, use a fixed cap:
 
@@ -101,6 +124,29 @@ For smaller machines or CPU-heavy workflows:
 2. `microsoft/Phi-3-small-8k-instruct`
 3. `Qwen/Qwen2.5-3B-Instruct`
 
+For AMD ROCm Docker workflows, start with GGUF models instead of Hugging Face IDs:
+
+| GGUF Model File                         | Why Consider It                                  | Fit                                      |
+| --------------------------------------- | ------------------------------------------------ | ---------------------------------------- |
+| `Qwen2.5-3B-Instruct-Q4_K_M.gguf`       | Current ROCm default target; compact and capable | Best first AMD ROCm option               |
+| `Qwen2.5-7B-Instruct-Q4_K_M.gguf`       | Better summaries if VRAM/RAM budget allows       | Good quality upgrade for larger systems  |
+| `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf`  | Widely used instruct model with strong summaries | Strong comparison model                  |
+| `Phi-3-mini-4k-instruct-Q4_K_M.gguf`    | Small and fast                                   | Good low-resource option                 |
+
+Useful ROCm llama.cpp tuning variables:
+
+| Variable                              | Purpose                                                   |
+| ------------------------------------- | --------------------------------------------------------- |
+| `TRANSCRIBER_LLAMA_CPP_MODEL_PATH`    | Absolute path to a GGUF file                              |
+| `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`    | Hugging Face repo used to download a missing GGUF file    |
+| `TRANSCRIBER_GGUF_CACHE_DIR`          | Directory containing the default GGUF model filename      |
+| `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`  | llama.cpp context window                                  |
+| `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`    | llama.cpp batch size                                      |
+| `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`    | Manual `n_gpu_layers` override                            |
+| `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB` | Extra VRAM headroom to reserve before offloading layers |
+
+Use `TRANSCRIBER_ANALYSIS_MODEL` only for Hugging Face model IDs. Use `TRANSCRIBER_LLAMA_CPP_MODEL_PATH` for GGUF files.
+
 ## Recommended First Comparison
 
 The first model worth comparing against the Qwen default is:
@@ -122,7 +168,7 @@ Compare outputs using the same transcript and evaluate:
 
 ## Important Caveat
 
-The current summarization code assumes that the model can be loaded with:
+The Hugging Face summarization backend assumes that the model can be loaded with:
 
 ```python
 AutoModelForCausalLM.from_pretrained(...)
@@ -135,11 +181,11 @@ and that the tokenizer supports:
 tokenizer.apply_chat_template(...)
 ```
 
-Most modern instruct models support this, but some may need adjusted tokenizer/model arguments or prompt formatting.
+Most modern instruct models support this, but some may need adjusted tokenizer/model arguments or prompt formatting. The AMD ROCm Docker backend does not use this loading path; it uses llama.cpp and local GGUF files instead.
 
 ## Overall Recommendation
 
-Use `google/gemma-4-E4B-it` as the baseline.
+Use `google/gemma-4-E4B-it` as the CPU/NVIDIA/Intel baseline. Use `Qwen2.5-3B-Instruct-Q4_K_M.gguf` as the first AMD ROCm Docker baseline.
 
 For better transcription, first try:
 
