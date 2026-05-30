@@ -1,0 +1,26 @@
+# Git metadata and local editor state
+.git
+.vscode/
+
+# Local Python environment and caches
+whisper_env/
+.direnv/
+.envrc
+.cache/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local recordings and generated personal data
+*.wav
+*.txt
+*_report.md
+meeting_*.md
+output/*
+!output/.keep
+
+# Keep source-controlled inputs needed by builds/tests
+!requirements.txt
+!samples/28000_tokens_transcript.txt
+!samples/example_recording.wav

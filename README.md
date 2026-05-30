@@ -10,6 +10,11 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
   - [System packages](#system-packages)
   - [Python packages](#python-packages)
 - [Installation](#installation)
+- [Docker Workflow (Optional)](#docker-workflow-optional)
+  - [Docker prerequisites](#docker-prerequisites)
+  - [Building the images](#building-the-images)
+  - [Running the Docker wrapper](#running-the-docker-wrapper)
+  - [Testing in Docker](#testing-in-docker)
 - [Quick Start — Meeting Recording](#quick-start--meeting-recording)
 - [Quick Start — YouTube Summarization](#quick-start--youtube-summarization)
 - [Output Files](#output-files)
@@ -96,6 +101,13 @@ Installed automatically into the virtual environment during setup (see below).
 
 ## Installation
 
+Choose one of two workflows:
+
+- **Native Python workflow** — create `whisper_env` locally and run the scripts directly.
+- **Docker workflow** — keep recording on the host, but run transcription and analysis inside a container. This avoids host-side Python package management for the heavy-lifting steps.
+
+The native Python workflow remains the default for local development and for `record_meeting.sh`.
+
 ### 1. Clone the repository
 
 ```bash
@@ -144,6 +156,110 @@ direnv allow .
 ```
 
 After copying `.envrc.example` to `.envrc`, no further configuration is needed.
+
+---
+
+## Docker Workflow (Optional)
+
+The repository includes a Docker-based path for the transcription and report-generation steps. Audio capture still happens on the host with `record_meeting.sh`, so the privacy boundary stays local while Python dependencies, PyTorch wheels, and model runtime libraries live inside container images.
+
+### Docker prerequisites
+
+- Docker Engine 20.10+
+- **NVIDIA GPU**: NVIDIA Container Toolkit plus a compatible NVIDIA driver
+- **AMD / ROCm GPU**: ROCm-compatible host with `/dev/kfd` access
+- **Intel GPU**: Intel graphics stack with `/dev/dri` access
+
+> The host does **not** need a Python virtual environment for the Docker workflow. The host still needs `ffmpeg` and `pactl` if you want to record meetings locally with `record_meeting.sh`.
+
+### Building the images
+
+You can pre-build the images or let `docker-run-transcribe.sh` build the selected image on first use.
+
+Build the shared base image first:
+
+```bash
+docker build -f Dockerfile.base -t transcriber:base .
+```
+
+Then build any variant you want to use:
+
+```bash
+docker build -f Dockerfile.cpu -t transcriber:cpu .
+docker build -f Dockerfile.nvidia -t transcriber:nvidia .
+docker build -f Dockerfile.rocm -t transcriber:rocm .
+docker build -f Dockerfile.intel -t transcriber:intel .
+```
+
+If you want a safe default tag for manual Docker runs, point `latest` at the CPU image:
+
+```bash
+docker tag transcriber:cpu transcriber:latest
+```
+
+### Running the Docker wrapper
+
+Make the wrapper executable once:
+
+```bash
+chmod +x docker-run-transcribe.sh
+```
+
+Then run it against a recorded WAV file:
+
+```bash
+./docker-run-transcribe.sh meeting_20260527_114300.wav
+```
+
+The wrapper automatically prefers backends in this order: **NVIDIA → ROCm → Intel → CPU**.
+
+Useful overrides:
+
+```bash
+# Force CPU even if a GPU is available
+FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
+./docker-run-transcribe.sh --force-cpu meeting_20260527_114300.wav
+
+# Force a specific image
+./docker-run-transcribe.sh --image transcriber:rocm meeting_20260527_114300.wav
+
+# Forward normal transcribe.py flags unchanged
+./docker-run-transcribe.sh meeting_20260527_114300.wav -l en
+```
+
+The wrapper mounts:
+
+- the selected audio file read-only under `/input/...`
+- `output/` from the repository root to `/app/output`
+- your HuggingFace cache (default: `~/.cache/huggingface`) to `/cache/huggingface`
+
+Generated files still land in the same project `output/` directory:
+
+- `output/<name>_transcript.txt`
+- `output/<name>_report.md`
+
+### Testing in Docker
+
+Run the test suite inside any image by overriding the image entrypoint:
+
+```bash
+docker run --rm --entrypoint pytest transcriber:cpu
+```
+
+To test the current checkout instead of the code baked into the image, mount the repository into `/app`:
+
+```bash
+docker run --rm --entrypoint pytest -v "$(pwd)":/app transcriber:cpu
+```
+
+Quick accelerator smoke tests:
+
+```bash
+docker run --rm --entrypoint python transcriber:cpu -c "import torch; print(torch.cuda.is_available())"
+docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import torch; print(torch.cuda.is_available())"
+```
+
+> `ENTRYPOINT` in the Docker images is `python transcribe.py`, so use `--entrypoint` whenever you want to run something else such as `pytest` or `python -c ...`.
 
 ---
 
@@ -482,6 +598,15 @@ python -c "import torch; print('cuda_available=', torch.cuda.is_available()); pr
 ```
 
 If `cuda_available` is `False`, your PyTorch installation may not match your CUDA or ROCm driver stack. Refer to the [PyTorch installation selector](https://pytorch.org/get-started/locally/) for the correct install command.
+
+For the Docker workflow, verify that the matching image is being used and that Docker received the correct accelerator flags:
+
+```bash
+./docker-run-transcribe.sh --help-docker
+
+docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import torch; print(torch.cuda.is_available())"
+docker run --rm --entrypoint python transcriber:rocm -c "import torch; print(torch.cuda.is_available(), getattr(torch.version, 'hip', None))"
+```
 
 **Analysis model download fails or is slow**
 

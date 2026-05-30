@@ -1,0 +1,37 @@
+# ---------- Dockerfile.base ----------
+# Common base image: OS packages, non-root user, source tree, pure-Python deps
+# (torch is installed separately per variant to match the accelerator)
+FROM python:3.14-slim
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# System packages needed by all wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libsndfile1 \
+        ffmpeg \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user (UID/GID overridden at runtime via --user)
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN addgroup --gid $GROUP_ID appgroup && \
+    adduser --uid $USER_ID --gid $GROUP_ID --disabled-password --gecos "" appuser
+
+WORKDIR /app
+
+# Install Python dependencies minus torch (torch is variant-specific)
+COPY requirements.txt .
+RUN sed '/^torch$/d' requirements.txt > requirements_no_torch.txt && \
+    python -m pip install --no-cache-dir -r requirements_no_torch.txt && \
+    rm requirements_no_torch.txt
+
+COPY . .
+
+USER appuser
+ENTRYPOINT ["python", "transcribe.py"]
+# --------------------------------------

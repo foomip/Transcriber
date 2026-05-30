@@ -1,0 +1,8 @@
+# ---------- Dockerfile.cpu ----------
+# CPU-only variant — installs standard (CPU) PyTorch on top of the base image.
+FROM transcriber:base
+
+RUN python -m pip install --no-cache-dir torch
+
+# Entrypoint inherited from base
+# --------------------------------------
