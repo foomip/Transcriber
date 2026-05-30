@@ -1,6 +1,21 @@
-# Apple Silicon Support — Implementation Plan
+# Apple Silicon Support — Implementation and Platform Guide
 
-**Status:** Planning — no code changes made yet.
+**Status:** In Progress — Platform support is evolving. Local-only transcription and analysis are available; Apple Silicon GPU acceleration is planned.
+
+---
+
+## New Feature: YouTube Summarization
+
+The project now includes a standalone tool, [youtube-summarize.py](youtube-summarize.py), which allows users to generate summary reports for YouTube videos without needing to record or locally transcribe audio.
+
+### How it Works
+1. **Transcript Fetching:** Uses `youtube-transcript-api` to fetch existing manual or auto-generated subtitles directly from YouTube.
+2. **Local Analysis:** Passes the fetched text to the existing `lib/analysis.py` pipeline to generate the same five-section Markdown report used for recorded meetings.
+3. **Output:** Saves results to `output/<video_id>_transcript.txt` and `output/<video_id>_report.md`.
+
+### Platform Performance
+- **CPU/GPU:** Because it bypasses the computationally expensive Whisper transcription step, this feature is fast on all platforms.
+- **Apple Silicon Acceleration:** The summarization phase uses the Gemma 4 model. Currently, this runs on the CPU on macOS. Once the **Phase 2** acceleration (detailed below) is implemented, `youtube-summarize.py` will automatically use the Apple Silicon GPU (via MPS) for significantly faster report generation.
 
 ---
 
@@ -10,7 +25,7 @@ Two facts established by research before any implementation decisions were made:
 
 1. **CTranslate2 (the engine under `faster-whisper`) has no MPS or Metal support.** An open GitHub issue (CTranslate2 #1607) has been tracking this since January 2024 with no landing date. A Metal PR (#1819) was closed without merging. `faster-whisper` will always run on CPU on macOS, regardless of chip generation.
 
-2. **`device_map="auto"` in HuggingFace Accelerate does not automatically use MPS.** It is CUDA-first, then CPU. Placing LFM2 on an Apple Silicon GPU requires an explicit `device_map={"": "mps"}` combined with `torch_dtype=torch.float16`.
+2. **`device_map="auto"` in HuggingFace Accelerate does not automatically use MPS.** It is CUDA-first, then CPU. Placing Gemma 4 on an Apple Silicon GPU requires an explicit `device_map={"": "mps"}` combined with `torch_dtype=torch.float16`.
 
 These two constraints determine the architecture for both phases.
 
@@ -133,7 +148,7 @@ Add a **BlackHole setup note** explaining:
 
 ## Phase 2 — Apple Silicon GPU Acceleration
 
-**Goal:** On an Apple Silicon Mac (M1/M2/M3/M4), both the transcription step and the LFM2 analysis step use the GPU via Apple's native ML frameworks.
+**Goal:** On an Apple Silicon Mac (M1/M2/M3/M4), both the transcription step and the Gemma 4 analysis step use the GPU via Apple's native ML frameworks.
 
 ### Transcription — `lib/transcription.py`
 
@@ -230,10 +245,10 @@ mlx-whisper ; sys_platform == "darwin" and platform_machine == "arm64"
 
 Add an **Apple Silicon** subsection under the platform notes, covering:
 - Transcription uses `mlx-whisper` on the Metal GPU / Neural Engine instead of `faster-whisper` / CTranslate2
-- LFM2 analysis uses PyTorch MPS
+- Gemma 4 analysis uses PyTorch MPS
 - Both are installed automatically from `requirements.txt` on `arm64` macOS
 - The `WHISPER_MODEL_SIZE` constant works the same way; larger models are available as `mlx-community/whisper-large-v3-mlx`
-- First run downloads both the mlx-whisper model weights (~same sizes as faster-whisper) and the LFM2 model to `~/.cache/huggingface`
+- First run downloads both the mlx-whisper model weights (~same sizes as faster-whisper) and the Gemma 4 model to `~/.cache/huggingface`
 
 ---
 
