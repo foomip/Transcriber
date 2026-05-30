@@ -65,7 +65,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 
 Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path — only the text transcript is fetched from YouTube's public subtitle endpoint.
 
-`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement for CPU/NVIDIA/Intel and uses a llama.cpp/GGUF backend for AMD ROCm Docker runs. The ROCm llama.cpp path dynamically splits GGUF model layers between AMD VRAM and system RAM using a conservative VRAM budget. If you want the higher-quality Gemma 4 Hugging Face analysis path, force CPU analysis instead.
+`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement for CPU/NVIDIA/Intel and uses a llama.cpp/GGUF backend for AMD ROCm Docker runs. The ROCm llama.cpp path uses Gemma 4 E4B GGUF by default and dynamically splits model layers between AMD VRAM and system RAM using a conservative VRAM budget.
 
 ---
 
@@ -226,7 +226,7 @@ The wrapper automatically prefers backends in this order: **NVIDIA → ROCm llam
 
 For ROCm runs, the wrapper selects `transcriber:rocm-llama` by default, passes `/dev/kfd`, `/dev/dri`, the required device owner groups, and `HSA_ENABLE_SDMA=0`, then mounts a GGUF cache at `/cache/transcriber/gguf`. The llama.cpp backend estimates a safe `n_gpu_layers` value from available ROCm VRAM and leaves the rest of the model in system RAM.
 
-If your AMD GPU has limited VRAM, or you want the higher-quality Gemma 4 analysis path, force the CPU Docker image instead. The first two overrides below do that.
+If your AMD GPU has limited VRAM, force the CPU Docker image instead. The first two overrides below do that.
 
 Useful overrides:
 
@@ -331,11 +331,11 @@ The script will:
 1. Detect the available transcription and summarisation backends
 2. Transcribe the audio with Faster-Whisper
 3. Save a transcript with language metadata and timestamped segments
-4. Load the configured analysis model and generate a full meeting report; ROCm uses Qwen2.5-3B-Instruct on the AMD GPU by default
+4. Load the configured analysis model and generate a full meeting report; ROCm Docker runs use Gemma 4 E4B GGUF through llama.cpp by default
 
 Long-running phases print elapsed-time progress messages so model downloads, model loading, transcription, and summary generation do not look stalled.
 
-> **First run only:** the selected analysis model is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). ROCm defaults to Qwen2.5-3B-Instruct. All subsequent runs load from disk.
+> **First run only:** the selected Hugging Face analysis model is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). ROCm llama.cpp runs download the default Gemma 4 E4B GGUF model to `~/.cache/transcriber/gguf`. All subsequent runs load from disk.
 
 ---
 
@@ -545,18 +545,20 @@ WHISPER_MODEL_SIZE = "small"   # change here
 
 ### Analysis model
 
-The default analysis model is backend-specific: CPU/CUDA use `google/gemma-4-E4B-it`, while ROCm Docker runs use a local GGUF model through llama.cpp.
+The default analysis model is backend-specific: CPU/CUDA/Intel use `google/gemma-4-E4B-it`, while ROCm Docker runs use the Gemma 4 E4B GGUF model through llama.cpp.
 
-Gemma 4 is the higher-quality default Hugging Face analysis model, but it is too large and transfer-heavy for reliable PyTorch/Transformers ROCm offload on many consumer AMD cards. The ROCm Docker default therefore uses llama.cpp, where GPU-layer offload is explicit and can be adjusted from a safe VRAM budget. If you want Gemma 4 on an AMD system, use the CPU analysis path.
+Gemma 4 is the higher-quality default analysis model, but the PyTorch/Transformers ROCm offload path is unreliable on many consumer AMD cards. The ROCm Docker default therefore uses llama.cpp with a Gemma 4 E4B GGUF file, where GPU-layer offload is explicit and can be adjusted from a safe VRAM budget.
 
-For ROCm llama.cpp runs, the default GGUF file is downloaded on first use into `~/.cache/transcriber/gguf/Qwen2.5-3B-Instruct-Q4_K_M.gguf`. To use another local GGUF file, point to it explicitly:
+For ROCm llama.cpp runs, the default GGUF file is downloaded on first use into `~/.cache/transcriber/gguf/gemma-4-E4B-it-Q4_K_M.gguf`. To use another local GGUF file, point to it explicitly:
 
 ```bash
 TRANSCRIBER_LLAMA_CPP_MODEL_PATH=/path/to/model.gguf \
   ./docker-run-transcribe.sh --image transcriber:rocm-llama meeting_20260527_114300.wav
 ```
 
-The default download source is `bartowski/Qwen2.5-3B-Instruct-GGUF`. To use a different Hugging Face GGUF repo that contains the same filename, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
+The default download source is `ggml-org/gemma-4-E4B-it-GGUF`. To use a different Hugging Face GGUF repo that contains the same filename, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
+
+The automatic ROCm layer split defaults to 42 model layers, matching the Gemma 4 E4B text configuration. Override `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT` only when using a different GGUF architecture.
 
 Advanced ROCm llama.cpp tuning is available through `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`, `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`, `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`, `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`, `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB`, and `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`. The defaults are intended to be conservative.
 
@@ -641,24 +643,24 @@ docker run --rm --entrypoint python transcriber:rocm-llama -c "import llama_cpp;
 docker run --rm --entrypoint python transcriber:rocm -c "import torch; print(torch.cuda.is_available(), getattr(torch.version, 'hip', None))"
 ```
 
-**AMD ROCm VRAM limits or Gemma 4 quality preference**
+**AMD ROCm VRAM limits**
 
-ROCm Docker analysis uses llama.cpp and dynamically chooses how many GGUF layers to offload to the AMD GPU. This avoids the PyTorch/Transformers CPU/GPU offload path that can trigger ROCm memory access faults on consumer AMD cards.
+ROCm Docker analysis uses llama.cpp and dynamically chooses how many Gemma 4 E4B GGUF layers to offload to the AMD GPU. This avoids the PyTorch/Transformers CPU/GPU offload path that can trigger ROCm memory access faults on consumer AMD cards.
 
 As a rough guide:
 
-- 12-16 GB AMD GPUs should usually offload most or all layers of the default GGUF model.
+- 12-16 GB AMD GPUs should usually offload most or all layers of the default Gemma 4 E4B GGUF model.
 - 8 GB AMD GPUs should offload fewer layers and use more system RAM.
 - 4-6 GB AMD GPUs may still work with a smaller or more heavily quantized GGUF model, but will be slower.
 
-If ROCm llama.cpp analysis fails with out-of-memory errors, GPU memory access faults, or repeated container crashes, use CPU analysis instead. This is also the recommended path when you want the higher-quality Gemma 4 analysis model:
+If ROCm llama.cpp analysis fails with out-of-memory errors, GPU memory access faults, or repeated container crashes, use a smaller local GGUF model or CPU analysis instead:
 
 ```bash
 ./docker-run-transcribe.sh --force-cpu meeting_20260527_114300.wav
 FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 ```
 
-Do not set `TRANSCRIBER_ANALYSIS_MODEL=google/gemma-4-E4B-it` while forcing `transcriber:rocm`; that uses the older PyTorch/Transformers ROCm path. On AMD systems, Gemma 4 is expected to be used through the CPU analysis path.
+Do not set `TRANSCRIBER_ANALYSIS_MODEL=google/gemma-4-E4B-it` while forcing `transcriber:rocm`; that uses the older PyTorch/Transformers ROCm path. On AMD systems, Gemma 4 is expected to be used through `transcriber:rocm-llama` as a GGUF model, or through the CPU analysis path.
 
 **Analysis model download fails or is slow**
 

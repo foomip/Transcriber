@@ -185,6 +185,12 @@ def test_detect_analysis_backend_downloads_missing_llama_cpp_model(tmp_path, mon
     assert model_path.exists()
 
 
+def test_rocm_llama_cpp_defaults_use_gemma4_e4b():
+    assert analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_REPO_ID == "ggml-org/gemma-4-E4B-it-GGUF"
+    assert analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_FILENAME == "gemma-4-E4B-it-Q4_K_M.gguf"
+    assert analysis.DEFAULT_ROCM_LLAMA_CPP_LAYER_COUNT == 42
+
+
 def test_ensure_llama_cpp_model_downloads_from_huggingface(tmp_path, monkeypatch):
     model_path = tmp_path / analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_FILENAME
     downloaded_path = tmp_path / "downloaded.gguf"

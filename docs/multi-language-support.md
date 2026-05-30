@@ -278,10 +278,11 @@ This makes it easier to:
 
 ### Model evaluation plan
 
-The current analysis default is `Qwen/Qwen2.5-3B-Instruct`.
+The current analysis default is Gemma 4 E4B, with ROCm Docker runs using the GGUF llama.cpp variant by default.
 
 This should remain the baseline, but multilingual summarization quality should be tested against at least:
 
+- `google/gemma-4-E4B-it`
 - `Qwen/Qwen2.5-3B-Instruct`
 - `Qwen/Qwen2.5-7B-Instruct`
 - at least one multilingual-first local model

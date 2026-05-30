@@ -340,7 +340,7 @@ def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
             "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE": "128",
             "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS": "24",
             "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB": "4",
-            "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT": "36",
+            "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT": "42",
             "TRANSCRIBER_MAX_TRANSCRIPT_CHARS": "28000",
         }
     )
@@ -370,5 +370,5 @@ def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
     assert "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE=128" in run_call
     assert "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS=24" in run_call
     assert "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB=4" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT=36" in run_call
+    assert "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT=42" in run_call
     assert "TRANSCRIBER_MAX_TRANSCRIPT_CHARS=28000" in run_call

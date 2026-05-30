@@ -68,13 +68,13 @@ This is the current default for CPU, NVIDIA CUDA, and Intel paths because it pro
 AMD ROCm Docker runs use a separate llama.cpp/GGUF backend by default. The default GGUF filename is:
 
 ```text
-Qwen2.5-3B-Instruct-Q4_K_M.gguf
+gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 It downloads on first use into the GGUF cache used by the wrapper:
 
 ```text
-~/.cache/transcriber/gguf/Qwen2.5-3B-Instruct-Q4_K_M.gguf
+~/.cache/transcriber/gguf/gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 or point directly at another local GGUF file:
@@ -84,9 +84,9 @@ TRANSCRIBER_LLAMA_CPP_MODEL_PATH="/path/to/model.gguf" \
 	./docker-run-transcribe.sh meeting_20260527_114300.wav
 ```
 
-The default download source is `bartowski/Qwen2.5-3B-Instruct-GGUF`. If you want the same filename from a different Hugging Face GGUF repository, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
+The default download source is `ggml-org/gemma-4-E4B-it-GGUF`. If you want the same filename from a different Hugging Face GGUF repository, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
 
-The ROCm llama.cpp backend computes a conservative `n_gpu_layers` value at runtime from available VRAM, model file size, context size, and configured headroom. It then leaves the remaining layers in system RAM, which is safer on consumer AMD cards than relying on Transformers device offload.
+The ROCm llama.cpp backend computes a conservative `n_gpu_layers` value at runtime from available VRAM, model file size, context size, configured headroom, and the default 42 Gemma 4 E4B text layers. It then leaves the remaining layers in system RAM, which is safer on consumer AMD cards than relying on Transformers device offload.
 
 Transcript prompt size is capped dynamically from available RAM. For repeatable model comparisons, use a fixed cap:
 
@@ -128,7 +128,8 @@ For AMD ROCm Docker workflows, start with GGUF models instead of Hugging Face ID
 
 | GGUF Model File                         | Why Consider It                                  | Fit                                      |
 | --------------------------------------- | ------------------------------------------------ | ---------------------------------------- |
-| `Qwen2.5-3B-Instruct-Q4_K_M.gguf`       | Current ROCm default target; compact and capable | Best first AMD ROCm option               |
+| `gemma-4-E4B-it-Q4_K_M.gguf`            | Current ROCm default target; strong summaries through llama.cpp | Best first AMD ROCm option               |
+| `Qwen2.5-3B-Instruct-Q4_K_M.gguf`       | Compact and capable if Gemma is too heavy        | Good lower-resource fallback             |
 | `Qwen2.5-7B-Instruct-Q4_K_M.gguf`       | Better summaries if VRAM/RAM budget allows       | Good quality upgrade for larger systems  |
 | `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf`  | Widely used instruct model with strong summaries | Strong comparison model                  |
 | `Phi-3-mini-4k-instruct-Q4_K_M.gguf`    | Small and fast                                   | Good low-resource option                 |
@@ -144,15 +145,16 @@ Useful ROCm llama.cpp tuning variables:
 | `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`    | llama.cpp batch size                                      |
 | `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`    | Manual `n_gpu_layers` override                            |
 | `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB` | Extra VRAM headroom to reserve before offloading layers |
+| `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`    | Model layer count used by the automatic GPU/RAM split estimator |
 
 Use `TRANSCRIBER_ANALYSIS_MODEL` only for Hugging Face model IDs. Use `TRANSCRIBER_LLAMA_CPP_MODEL_PATH` for GGUF files.
 
 ## Recommended First Comparison
 
-The first model worth comparing against the Qwen default is:
+The first smaller model worth comparing against the Gemma 4 E4B default is:
 
 ```bash
-TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-7B-Instruct" \
+TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-3B-Instruct" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
@@ -185,7 +187,7 @@ Most modern instruct models support this, but some may need adjusted tokenizer/m
 
 ## Overall Recommendation
 
-Use `google/gemma-4-E4B-it` as the CPU/NVIDIA/Intel baseline. Use `Qwen2.5-3B-Instruct-Q4_K_M.gguf` as the first AMD ROCm Docker baseline.
+Use `google/gemma-4-E4B-it` as the CPU/NVIDIA/Intel baseline. Use `gemma-4-E4B-it-Q4_K_M.gguf` as the first AMD ROCm Docker baseline.
 
 For better transcription, first try:
 
@@ -193,10 +195,10 @@ For better transcription, first try:
 WHISPER_MODEL_SIZE = "small"
 ```
 
-For better summarization quality, first try:
+For a lighter summarization comparison, first try:
 
 ```bash
-TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-7B-Instruct" \
+TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-3B-Instruct" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
