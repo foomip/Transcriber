@@ -18,6 +18,11 @@ BASE_META = {
 def test_detect_analysis_backend_reports_cuda(monkeypatch):
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "CUDA GPU")
+    monkeypatch.setattr(
+        analysis.torch.cuda,
+        "mem_get_info",
+        lambda: (_ for _ in ()).throw(RuntimeError("no device")),
+    )
     monkeypatch.setattr(analysis.torch.version, "hip", None, raising=False)
 
     backend = analysis.detect_analysis_backend()
@@ -28,14 +33,46 @@ def test_detect_analysis_backend_reports_cuda(monkeypatch):
 
 
 def test_detect_analysis_backend_reports_rocm(monkeypatch):
+    monkeypatch.delenv(analysis.GPU_HEADROOM_ENV, raising=False)
+    monkeypatch.delenv(analysis.GPU_MAX_MEMORY_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
+    monkeypatch.setattr(
+        analysis.torch.cuda,
+        "mem_get_info",
+        lambda: (16 * analysis._GIB, 16 * analysis._GIB),
+    )
     monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
+    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 64 * analysis._GIB)
 
     backend = analysis.detect_analysis_backend()
 
     assert backend.name == "rocm"
     assert backend.device_name == "ROCm GPU"
+    assert backend.model_kwargs == {
+        "device_map": "auto",
+        "torch_dtype": "auto",
+        "max_memory": {0: "9GiB", "cpu": "56GiB"},
+    }
+    assert "GPU memory capped at 9GiB" in backend.notes[0]
+
+
+def test_detect_analysis_backend_respects_gpu_max_memory_override(monkeypatch):
+    monkeypatch.setenv(analysis.GPU_MAX_MEMORY_ENV, "6")
+    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
+    monkeypatch.setattr(
+        analysis.torch.cuda,
+        "mem_get_info",
+        lambda: (16 * analysis._GIB, 16 * analysis._GIB),
+    )
+    monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
+    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: None)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.model_kwargs["max_memory"] == {0: "6GiB"}
+    assert f"using {analysis.GPU_MAX_MEMORY_ENV}=6 GiB" in backend.notes[0]
 
 
 def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatch):

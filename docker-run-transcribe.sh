@@ -85,6 +85,39 @@ has_intel() {
     return 1
 }
 
+group_id_for_path() {
+    local path
+    path="$1"
+
+    [ -e "$path" ] || return 1
+    stat -c '%g' -- "$path" 2>/dev/null
+}
+
+add_runtime_group() {
+    local group_id existing_group_id
+    group_id="$1"
+
+    [ -n "$group_id" ] || return
+
+    for existing_group_id in "${runtime_group_ids[@]}"; do
+        if [ "$existing_group_id" = "$group_id" ]; then
+            return
+        fi
+    done
+
+    runtime_group_ids+=("$group_id")
+    run_flags+=(--group-add "$group_id")
+}
+
+add_device_group() {
+    local path group_id
+    path="$1"
+
+    if group_id="$(group_id_for_path "$path")"; then
+        add_runtime_group "$group_id"
+    fi
+}
+
 backend_for_known_image() {
     case "$1" in
         transcriber:cpu|transcriber:latest)
@@ -346,15 +379,20 @@ run_flags=(
     -v "$OUTPUT_DIR:/app/output"
     -v "$HF_CACHE_DIR:/cache/huggingface"
 )
+runtime_group_ids=()
 
 case "$selected_backend" in
     nvidia)
         run_flags+=(--gpus all)
         ;;
     rocm)
-        run_flags+=(--device "$DEV_KFD_PATH" --group-add video)
+        run_flags+=(--device "$DEV_KFD_PATH")
+        add_device_group "$DEV_KFD_PATH"
         if [ -e "$DRI_DIR" ]; then
             run_flags+=(--device "$DRI_DIR")
+            for dri_device in "$DRI_DIR"/*; do
+                add_device_group "$dri_device"
+            done
         fi
         ;;
     intel)

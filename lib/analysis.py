@@ -13,6 +13,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
+# Set before importing torch so the CUDA/HIP allocator sees it during startup.
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -107,6 +110,10 @@ _CPUINFO_PATH = "/proc/cpuinfo"
 _MEMINFO_PATH = "/proc/meminfo"
 _GIB = 1024 ** 3
 FLOAT32_MIN_RAM_GIB = 32   # float32 weights ~30 GB + headroom for KV cache and OS
+DEFAULT_GPU_HEADROOM_GIB = 7
+CPU_OFFLOAD_HEADROOM_GIB = 8
+GPU_HEADROOM_ENV = "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB"
+GPU_MAX_MEMORY_ENV = "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB"
 
 
 def _available_ram_bytes() -> int | None:
@@ -119,6 +126,58 @@ def _available_ram_bytes() -> int | None:
     except (OSError, ValueError, IndexError):
         pass
     return None
+
+
+def _positive_float_env(name: str) -> float | None:
+    value = os.environ.get(name)
+    if not value:
+        return None
+
+    try:
+        parsed = float(value.replace("_", ""))
+    except ValueError:
+        print(f"  ⚠️  Ignoring invalid {name}={value!r}")
+        return None
+
+    if parsed <= 0:
+        print(f"  ⚠️  Ignoring non-positive {name}={value!r}")
+        return None
+    return parsed
+
+
+def _memory_gib_string(gib: float) -> str:
+    return f"{max(1, int(gib))}GiB"
+
+
+def _gpu_max_memory() -> tuple[dict[Any, str], tuple[str, ...]]:
+    """Return a conservative Accelerate max_memory map for GPU inference."""
+    try:
+        _free_bytes, total_bytes = torch.cuda.mem_get_info()
+    except Exception:
+        return {}, ()
+
+    total_gib = total_bytes / _GIB
+    requested_max_gib = _positive_float_env(GPU_MAX_MEMORY_ENV)
+    if requested_max_gib is not None:
+        gpu_limit_gib = min(requested_max_gib, total_gib)
+        source_note = f"using {GPU_MAX_MEMORY_ENV}={requested_max_gib:g} GiB"
+    else:
+        headroom_gib = _positive_float_env(GPU_HEADROOM_ENV) or DEFAULT_GPU_HEADROOM_GIB
+        gpu_limit_gib = total_gib - headroom_gib
+        source_note = (
+            f"leaving {headroom_gib:g} GiB headroom for offloaded weights "
+            "and generation cache"
+        )
+
+    max_memory: dict[Any, str] = {0: _memory_gib_string(gpu_limit_gib)}
+
+    available_ram = _available_ram_bytes()
+    if available_ram is not None:
+        cpu_limit_gib = (available_ram / _GIB) - CPU_OFFLOAD_HEADROOM_GIB
+        max_memory["cpu"] = _memory_gib_string(cpu_limit_gib)
+
+    notes = (f"GPU memory capped at {max_memory[0]} ({source_note})",)
+    return max_memory, notes
 
 
 def _cpu_supports_avx512_bf16() -> bool:
@@ -149,13 +208,19 @@ def detect_analysis_backend() -> AnalysisBackend:
             device_name = "GPU"
 
         backend_name = "rocm" if hip_version else "cuda"
+        model_kwargs: dict[str, Any] = {
+            "device_map": "auto",
+            "torch_dtype": "auto",
+        }
+        max_memory, notes = _gpu_max_memory()
+        if max_memory:
+            model_kwargs["max_memory"] = max_memory
+
         return AnalysisBackend(
             name=backend_name,
             device_name=device_name,
-            model_kwargs={
-                "device_map": "auto",
-                "torch_dtype": "auto",
-            },
+            model_kwargs=model_kwargs,
+            notes=notes,
         )
 
     # No GPU — determine the best dtype for CPU inference.
@@ -341,8 +406,12 @@ def generate_summaries(
     backend = detect_analysis_backend()
     if backend.name == "rocm":
         print(f"  ✅ ROCm GPU detected for summarization: {backend.device_name}")
+        for note in backend.notes:
+            print(f"  ℹ️  {note}")
     elif backend.name == "cuda":
         print(f"  ✅ CUDA GPU detected for summarization: {backend.device_name}")
+        for note in backend.notes:
+            print(f"  ℹ️  {note}")
     else:
         print("  ℹ️  No PyTorch GPU detected for summarization — using CPU")
         for note in backend.notes:
@@ -383,7 +452,14 @@ def generate_summaries(
         "  Generating meeting summary report...",
         done_message="Generated meeting summary report",
     ):
-        generated_report = _query(model, tokenizer, user_msg)
+        try:
+            generated_report = _query(model, tokenizer, user_msg)
+        except torch.OutOfMemoryError as exc:
+            raise AnalysisModelError(
+                "Analysis model ran out of GPU memory during generation. "
+                f"Try increasing {GPU_HEADROOM_ENV} or lowering {GPU_MAX_MEMORY_ENV} "
+                "to force more of the model onto CPU."
+            ) from exc
 
     _validate_grounding(generated_report, transcript_body)
     return _parse_report_sections(generated_report)

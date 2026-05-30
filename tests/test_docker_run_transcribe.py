@@ -188,7 +188,7 @@ def test_wrapper_force_cpu_builds_base_then_cpu_and_omits_gpu_flags(tmp_path):
     assert "--device" not in run_call
 
 
-def test_wrapper_manual_rocm_image_uses_rocm_runtime_flags_without_rebuilding(tmp_path):
+def test_wrapper_manual_rocm_image_uses_rocm_device_groups_without_rebuilding(tmp_path):
     env, log_path = _make_env(tmp_path, existing_images="transcriber:rocm")
 
     kfd_path = tmp_path / "kfd"
@@ -227,4 +227,5 @@ def test_wrapper_manual_rocm_image_uses_rocm_runtime_flags_without_rebuilding(tm
     assert str(kfd_path) in run_call
     assert str(dri_dir) in run_call
     assert "--group-add" in run_call
-    assert "video" in run_call
+    assert str(kfd_path.stat().st_gid) in run_call
+    assert str((dri_dir / "renderD128").stat().st_gid) in run_call
