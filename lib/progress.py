@@ -10,6 +10,18 @@ import time
 from types import TracebackType
 
 
+def _format_elapsed(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
 class ProgressTimer:
     """Print a same-line spinner with elapsed time while an operation runs."""
 
@@ -49,11 +61,11 @@ class ProgressTimer:
         if self._thread is not None:
             self._thread.join(timeout=1.0)
 
-        elapsed = time.monotonic() - self._started_at
+        elapsed = _format_elapsed(time.monotonic() - self._started_at)
         if exc_type is None:
-            self._write_final(f"  {self.done_message} in {elapsed:.1f}s")
+            self._write_final(f"  {self.done_message} in {elapsed}")
         else:
-            self._write_final(f"  Failed after {elapsed:.1f}s")
+            self._write_final(f"  Failed after {elapsed}")
 
     def _run(self) -> None:
         while not self._stop_event.wait(self.interval_seconds):
@@ -61,9 +73,9 @@ class ProgressTimer:
             self._write_status()
 
     def _write_status(self) -> None:
-        elapsed = time.monotonic() - self._started_at
+        elapsed = _format_elapsed(time.monotonic() - self._started_at)
         frame = self._SPINNER_FRAMES[self._frame_index % len(self._SPINNER_FRAMES)]
-        self._write_line(f"  {frame} {self.message} {elapsed:.0f}s elapsed")
+        self._write_line(f"  {frame} {self.message} {elapsed} elapsed")
 
     def _write_final(self, line: str) -> None:
         with self._lock:
