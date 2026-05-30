@@ -50,7 +50,7 @@ The original single-file implementation covered:
 1. Device detection for Faster-Whisper
 2. Timestamp formatting
 3. Whisper transcription
-4. LFM2 model loading and querying
+4. Gemma 4 model loading and querying
 5. Five summary generation passes
 6. Markdown report assembly
 
@@ -65,7 +65,7 @@ torch
 accelerate
 ```
 
-`transformers>=5.2.0` is a hard requirement imposed by LFM2-2.6B-Transcript. `accelerate` is required for `device_map="auto"` to work correctly.
+`transformers>=5.2.0` is a hard requirement imposed by the analysis model. `accelerate` is required for `device_map="auto"` to work correctly.
 
 ---
 
@@ -79,13 +79,13 @@ accelerate
 
 **Why `ctranslate2` rather than `torch.cuda.is_available()`:** CTranslate2 is already loaded at this point (Faster-Whisper depends on it), so we avoid an extra PyTorch import just for device detection. PyTorch is still used to print the GPU name, but wrapped in a `try/except` so it's non-fatal if not available.
 
-For the LFM2 model, `device_map="auto"` with `torch_dtype="auto"` (HuggingFace Accelerate) handles GPU placement transparently with no additional detection code needed.
+For the Gemma 4 model, `device_map="auto"` with `torch_dtype="auto"` (HuggingFace Accelerate) handles GPU placement transparently with no additional detection code needed.
 
-### 3b. LiquidAI LFM2-2.6B-Transcript instead of Ollama
+### 3b. Gemma 4 instead of Ollama
 
-**What changed:** Replaced the Gemini suggestion of piping the transcript into a local Ollama instance with `LiquidAI/LFM2-2.6B-Transcript` loaded directly via the `transformers` library.
+**What changed:** Replaced the Gemini suggestion of piping the transcript into a local Ollama instance with `google/gemma-4-E4B-it` loaded directly via the `transformers` library.
 
-**Why:** Ollama is a general-purpose model server and requires a separate running daemon. LFM2-2.6B-Transcript is a model purpose-built specifically for meeting summarisation from transcripts — trained on meeting data, not general conversation. Key properties:
+**Why:** Ollama is a general-purpose model server and requires a separate running daemon. Gemma 4 is the default model purpose-built specifically for meeting summarisation from transcripts — trained on meeting data, not general conversation. Key properties:
 
 - 2.6B parameters, under 3 GB RAM for long meetings
 - 32K token context window
@@ -95,7 +95,7 @@ For the LFM2 model, `device_map="auto"` with `torch_dtype="auto"` (HuggingFace A
 
 The model is downloaded once to the HuggingFace cache (`~/.cache/huggingface`) and runs fully offline thereafter. No API key, no daemon, no cloud.
 
-**Five summary passes:** Rather than a single prompt, `analysis.py` runs five separate forward passes — one per section type — using the exact instruction strings from the LFM2 prompting recipe. This produces higher-quality, more focused output than a single combined prompt.
+**Five summary passes:** Rather than a single prompt, `analysis.py` runs five separate forward passes — one per section type — using the exact instruction strings from the Gemma 4 prompting recipe. This produces higher-quality, more focused output than a single combined prompt.
 
 ### 3c. Timestamp format
 
@@ -238,10 +238,10 @@ The original `transcribe.py` was ~290 lines covering five conceptually distinct 
 
 | Symbol | Description |
 |---|---|
-| `LFM2_MODEL_ID` / `LFM2_*` constants | Model ID, system prompt, temperature, token limit |
+| `ANALYSIS_MODEL_ID` / `ANALYSIS_*` constants | Model ID, system prompt, temperature, token limit |
 | `SUMMARY_TASKS` | `list[tuple[str, str]]` of `(heading, instruction)` pairs |
-| `_build_user_message(...)` | Formats transcript + metadata into the LFM2 prompting schema |
-| `_query(model, tokenizer, message)` | Runs one LFM2 forward pass, returns generated text only |
+| `_build_user_message(...)` | Formats transcript + metadata into the Gemma 4 prompting schema |
+| `_query(model, tokenizer, message)` | Runs one Gemma 4 forward pass, returns generated text only |
 | `generate_summaries(transcript_body, meta)` | Loads model, runs all five passes, returns `list[tuple[str, str]]` |
 
 #### `lib/report.py` — Stage 3: Sections → Markdown file
@@ -260,9 +260,9 @@ Imports from all three modules and wires them together in sequence. Handles all 
 
 ### Key interface design decisions
 
-**`generate_summaries()` returns `list[tuple[str, str]]`** (heading + text pairs) rather than a dict. This means `report.py` knows nothing about `SUMMARY_TASKS`, `LFM2`, or the number/order of sections — it simply iterates over whatever pairs it receives. The analysis and report modules are fully decoupled.
+**`generate_summaries()` returns `list[tuple[str, str]]`** (heading + text pairs) rather than a dict. This means `report.py` knows nothing about `SUMMARY_TASKS`, the analysis model, or the number/order of sections — it simply iterates over whatever pairs it receives. The analysis and report modules are fully decoupled.
 
-**`build_transcript_body()` lives in `report.py`**, not `analysis.py`, even though its output is fed into the analysis step. Stripping timestamps and enforcing the context-window truncation limit are data-preparation concerns, not LFM2 concerns. `transcribe.py` calls it first and passes the result to `generate_summaries()`.
+**`build_transcript_body()` lives in `report.py`**, not `analysis.py`, even though its output is fed into the analysis step. Stripping timestamps and enforcing the context-window truncation limit are data-preparation concerns, not analysis model concerns. `transcribe.py` calls it first and passes the result to `generate_summaries()`.
 
 ---
 
@@ -292,7 +292,7 @@ transcriber/
 ├── lib/
 │   ├── __init__.py
 │   ├── transcription.py    # Stage 1: GPU detection, Whisper, timestamps
-│   ├── analysis.py         # Stage 2: LFM2 model, five summary passes
+│   ├── analysis.py         # Stage 2: Gemma 4 model, five summary passes
 │   └── report.py           # Stage 3: metadata parsing, Markdown assembly
 ├── docs/
 │   └── initial-implementation.md   # this file
@@ -322,7 +322,7 @@ transcribe.py                                               │
   ├─ report.build_transcript_body()  ← strips timestamps, enforces 28K char limit
   │
   ├─ analysis.generate_summaries()
-  │    └─ LFM2-2.6B-Transcript (device_map="auto")
+  │    └─ Gemma 4 (device_map="auto")
   │    └─ 5 × forward pass  (exec summary / detailed / actions / decisions / topics)
   │    └─ returns list[tuple[str, str]]  (heading, generated text)
   │

@@ -498,7 +498,7 @@ Until then, the GUI workers can suppress the noise by redirecting stdout to `os.
 
 ### Model loading time
 
-`WhisperModel` and `LFM2` each take several seconds to load even from disk cache. The `QThread` approach means the UI remains interactive during loading. A spinner or progress indicator should be shown as soon as a button is pressed, not only when the actual processing begins.
+`WhisperModel` and `Gemma 4` each take several seconds to load even from disk cache. The `QThread` approach means the UI remains interactive during loading. A spinner or progress indicator should be shown as soon as a button is pressed, not only when the actual processing begins.
 
 ### `AnalysisGroundingError`
 

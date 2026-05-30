@@ -10,7 +10,7 @@
 - [record_meeting.sh](record_meeting.sh) records desktop audio plus microphone through PipeWire/PulseAudio and FFmpeg into a 16 kHz mono WAV file.
 - [transcribe.py](transcribe.py) is the CLI entry point. It checks the audio path, runs transcription, writes `<base>_transcript.txt`, runs analysis, then writes `<base>_report.md`.
 - [lib/transcription.py](lib/transcription.py) owns CUDA detection, Faster-Whisper model selection, timestamp formatting, and raw transcript line generation.
-- [lib/analysis.py](lib/analysis.py) owns LiquidAI LFM2 loading, prompting, and the five report-generation passes.
+- [lib/analysis.py](lib/analysis.py) owns Gemma 4 loading, prompting, and the five report-generation passes.
 - [lib/report.py](lib/report.py) owns filename metadata parsing, transcript body preparation, duration estimation, and Markdown report assembly.
 
 ## Environment And Commands
@@ -39,5 +39,5 @@
 - Treat `*.wav`, `*_transcript.txt`, and `*_report.md` as generated personal data. Do not inspect, commit, or summarize them unless the user explicitly asks.
 - Keep recorder changes compatible with PipeWire through the PulseAudio compatibility layer; `pactl` and FFmpeg `-f pulse` are intentional.
 - Preserve the `meeting_YYYYMMDD_HHMM[SS].wav` naming convention when changing recording/output behavior; [lib/report.py](lib/report.py) extracts metadata from that pattern.
-- The LFM2 model has a finite context window; keep or adjust `MAX_TRANSCRIPT_CHARS` in [lib/report.py](lib/report.py) deliberately when changing summarization behavior.
+- The Gemma 4 model has a finite context window; keep or adjust `MAX_TRANSCRIPT_CHARS` in [lib/report.py](lib/report.py) deliberately when changing summarization behavior.
 - First runs may download large HuggingFace models into the user's cache. Avoid adding commands or tests that unexpectedly re-download models or process real recordings.

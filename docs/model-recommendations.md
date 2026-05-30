@@ -3,7 +3,7 @@
 This project has two separate model stages:
 
 1. **Transcription**: speech-to-text, currently handled by Faster-Whisper in `lib/transcription.py`.
-2. **Analysis and summarization**: transcript-to-report generation, currently handled by `Qwen/Qwen2.5-3B-Instruct` in `lib/analysis.py`.
+2. **Analysis and summarization**: transcript-to-report generation, currently handled by `google/gemma-4-E4B-it` in `lib/analysis.py`.
 
 ## Transcription Model Recommendations
 
@@ -53,7 +53,7 @@ Notes:
 The default analysis model is:
 
 ```python
-DEFAULT_ANALYSIS_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+DEFAULT_ANALYSIS_MODEL_ID = "google/gemma-4-E4B-it"
 ```
 
 For one-off comparisons, override it without editing source:
@@ -63,7 +63,7 @@ TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
-This is the current default because it is still practical locally while offering stronger general instruction-following than LFM2 in this workflow.
+This is the current default because it provides excellent reasoning and instruction-following while remaining practical for local deployment.
 
 Transcript prompt size is capped dynamically from available RAM. For repeatable model comparisons, use a fixed cap:
 
@@ -77,10 +77,11 @@ Recommended alternatives:
 
 | Model                                  | Why Consider It                                            | Fit                                             |
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------- |
-| `Qwen/Qwen2.5-3B-Instruct`             | Current default; strong instruction following for its size | Best first option for local runs                |
+| `google/gemma-4-E4B-it`                | Current default; strong reasoning and concise output        | Best first option for local runs                |
+| `Qwen/Qwen2.5-3B-Instruct`             | Fast, strong instruction following for its size             | Strong lightweight alternative                  |
 | `mistralai/Mistral-7B-Instruct-v0.3`   | Efficient, strong summarization, widely supported          | Strong comparison model                         |
 | `meta-llama/Meta-Llama-3-8B-Instruct`  | Strong instruction following and meeting analysis          | Good quality upgrade if hardware allows         |
-| `Qwen/Qwen2.5-7B-Instruct`             | Better quality than the 3B default, but heavier            | Good upgrade if hardware allows                 |
+| `Qwen/Qwen2.5-7B-Instruct`             | Better quality than the 3B models, but heavier            | Good upgrade if hardware allows                 |
 | `google/gemma-2-9b-it`                 | Strong summarization and reasoning                         | Good quality option, but check hardware support |
 | `microsoft/Phi-3-mini-4k-instruct`     | Small and fast                                             | Good low-resource option, but limited context   |
 | `microsoft/Phi-3-small-8k-instruct`    | Compact with better context than Phi mini                  | Good middle-ground local model                  |
@@ -89,7 +90,7 @@ Recommended alternatives:
 
 Shortlist to test:
 
-1. `Qwen/Qwen2.5-3B-Instruct`
+1. `google/gemma-4-E4B-it`
 2. `Qwen/Qwen2.5-7B-Instruct`
 3. `mistralai/Mistral-7B-Instruct-v0.3`
 4. `google/gemma-2-9b-it`
@@ -98,7 +99,7 @@ For smaller machines or CPU-heavy workflows:
 
 1. `microsoft/Phi-3-mini-4k-instruct`
 2. `microsoft/Phi-3-small-8k-instruct`
-3. `LiquidAI/LFM2-2.6B-Transcript`
+3. `Qwen/Qwen2.5-3B-Instruct`
 
 ## Recommended First Comparison
 
@@ -138,7 +139,7 @@ Most modern instruct models support this, but some may need adjusted tokenizer/m
 
 ## Overall Recommendation
 
-Use `Qwen/Qwen2.5-3B-Instruct` as the baseline.
+Use `google/gemma-4-E4B-it` as the baseline.
 
 For better transcription, first try:
 
