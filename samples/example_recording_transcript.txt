@@ -1,0 +1,500 @@
+# Transcription metadata
+Source file: example_recording.wav
+Whisper model: small
+Requested language: English (en)
+Detected language: English (en)
+Detection confidence: 100%
+
+# Transcript
+
+[00:00:00.00 -> 00:00:10.32]  Link to YouTube's live and link then usually runs a little slower so I don't usually wait.
+[00:00:10.32 -> 00:00:15.24]  So let's jump in.
+[00:00:15.24 -> 00:00:19.84]  Hello and welcome to today's episode of the DMS Defying Microsoft Podcast.
+[00:00:19.84 -> 00:00:23.92]  I'm your host Nathan Taylor and today I'm joined by Nick Ross.
+[00:00:23.92 -> 00:00:24.92]  How you doing Nick?
+[00:00:24.92 -> 00:00:25.92]  Doing great.
+[00:00:25.92 -> 00:00:26.92]  Happy to be here.
+[00:00:26.92 -> 00:00:29.52]  Excited to chat a little bit more today too.
+[00:00:29.92 -> 00:00:30.92]  Yeah, should be fun.
+[00:00:30.92 -> 00:00:35.04]  Looking forward to digging into an interesting topic with you.
+[00:00:35.04 -> 00:00:38.80]  Sure many people know who you are but would you mind just giving a little intro about yourself?
+[00:00:38.80 -> 00:00:39.80]  Yeah, I'm Nick.
+[00:00:39.80 -> 00:00:42.84]  I'm the CEO of a company called ClockApsil.
+[00:00:42.84 -> 00:00:48.20]  We're an automated security assessment management platform for Microsoft 365 and a lot of people
+[00:00:48.20 -> 00:00:52.20]  know me from my own YouTube channel which is T-minus365.
+[00:00:52.20 -> 00:00:57.88]  Microsoft MVP create a lot of content for MSPs and SMB around 365.
+[00:00:57.88 -> 00:00:58.88]  Love it.
+[00:00:58.88 -> 00:01:05.68]  And when you use both resources regularly your T-minus365 stuff is often stuff I'm referencing
+[00:01:05.68 -> 00:01:13.32]  and we use that out of ClockApsil it's a great product so can't plug either enough.
+[00:01:13.32 -> 00:01:18.88]  But today we're going to nerd out about running Microsoft Defender in passive mode which
+[00:01:18.88 -> 00:01:24.12]  is kind of a topic that I've seen a lot of people dance around but is I think a really
+[00:01:24.12 -> 00:01:26.20]  valuable scenario.
+[00:01:26.20 -> 00:01:33.72]  So let's jump in and kind of talk about why would people want to run in passive mode and
+[00:01:33.72 -> 00:01:35.60]  what is passive mode?
+[00:01:35.60 -> 00:01:40.04]  Yeah, I think the most common example that we see obviously in the industry is you're
+[00:01:40.04 -> 00:01:46.64]  using a third party endpoint protection tool like a CrowdStrike or Sentinel-1 as an example
+[00:01:46.64 -> 00:01:50.16]  could be a variety of different tools that you're overlaying but you still want to
+[00:01:50.16 -> 00:01:54.96]  get some of the major benefits that comes with your existing licensing for Microsoft that
+[00:01:55.00 -> 00:01:59.00]  you could use like Defender for Business if you're on Business Premium or Defender
+[00:01:59.00 -> 00:02:03.84]  for Endpoint if you're on more of the enterprise plan and passive mode is a way
+[00:02:03.84 -> 00:02:07.76]  for you to kind of maximize both solutions at the same time and we'll walk
+[00:02:07.76 -> 00:02:12.72]  through kind of all the layers of what that could mean if you activate it or
+[00:02:12.72 -> 00:02:17.28]  if you turn it into block mode things like that but passive mode is simply
+[00:02:17.28 -> 00:02:22.44]  saying hey we can coexist you know with this existing solution and we can
+[00:02:22.48 -> 00:02:27.00]  utilize some of the core functionality or features that you get with Defender for
+[00:02:27.00 -> 00:02:30.32]  Business or Defender for Endpoint like threatened vulnerability management is
+[00:02:30.32 -> 00:02:33.92]  probably my favorite personally I'd like to hear if that's maybe yours or what
+[00:02:33.92 -> 00:02:37.48]  other features you love about that that you get but that's where we can
+[00:02:37.48 -> 00:02:41.48]  actually analyze all the vulnerabilities that are on our software and the OS
+[00:02:41.48 -> 00:02:46.36]  layer itself and we can have telemetry coming to us about the CBEs and what
+[00:02:46.36 -> 00:02:50.48]  has a public exploit what you should go patch immediately or maybe even remove
+[00:02:50.52 -> 00:02:54.28]  if it's an application that shouldn't even be on the device to begin with so
+[00:02:54.28 -> 00:02:57.72]  that's kind of the high level love to hear you know your take to just Nathan
+[00:02:57.72 -> 00:03:02.00]  from what you guys are seeing as well yeah I think it's an interesting equation
+[00:03:02.00 -> 00:03:06.64]  as you mentioned most of our customers a lot a large majority of our customers
+[00:03:06.64 -> 00:03:11.16]  have access to Defender because they're running a Business Premium E3 or E5 right
+[00:03:11.16 -> 00:03:15.72]  and we've talked about it before Defender is a really compelling product it is a
+[00:03:15.72 -> 00:03:20.20]  high quality EDR I you know I think in a lot of the metrics maybe the
+[00:03:20.24 -> 00:03:24.84]  Gartner or however you want to compare your tools your defender usually scores
+[00:03:24.84 -> 00:03:27.96]  up there with the Sentinel ones the crowd strikes the world as kind of the
+[00:03:27.96 -> 00:03:32.92]  industry leaders it's a really solid product so a lot of our customers are
+[00:03:32.92 -> 00:03:36.32]  entitled to it but they're using another product and I think there's a
+[00:03:36.32 -> 00:03:41.52]  number of reasons for that one is I know there's a there's a probably a wise
+[00:03:41.52 -> 00:03:45.20]  perspective that hey I want multiple people watching the ship you know I
+[00:03:45.20 -> 00:03:48.68]  want to make sure I'm not just relying on Microsoft's heuristics I like the
+[00:03:49.04 -> 00:03:53.32]  Sentinel one as a different set of detection algorithms and I want somebody
+[00:03:53.32 -> 00:03:57.36]  watching for maybe some Microsoft has a blind spot maybe this other vendor
+[00:03:57.36 -> 00:04:02.28]  doesn't have that sometimes people know the other products well hey we've been
+[00:04:02.28 -> 00:04:04.92]  running Sentinel one for years we trust that we know what it's fully
+[00:04:04.92 -> 00:04:08.76]  configured we don't want to switch and I think in the service industry the MSP
+[00:04:08.76 -> 00:04:13.12]  space you know the one big knock on Defender is it's just not easy to
+[00:04:13.12 -> 00:04:17.40]  manage multi-tenant in its scale like I'm sorry if you're gonna manage 500
+[00:04:17.48 -> 00:04:21.36]  accounts Sentinel one does almost everything with one click there's just
+[00:04:21.36 -> 00:04:24.96]  no easy ways to do that with Defender and so it's always been a challenge in
+[00:04:24.96 -> 00:04:29.04]  the space where a lot of providers are running you know they're more scalable
+[00:04:29.04 -> 00:04:33.16]  traditional EDR providers but if you're already paying for Defender and
+[00:04:33.16 -> 00:04:35.40]  you've got access to it I'm with you there's some really compelling
+[00:04:35.40 -> 00:04:40.16]  features that you can enable in this passive mode you know I think my
+[00:04:40.16 -> 00:04:43.80]  favorite feature is the ability for it to do some of that smart screen
+[00:04:43.80 -> 00:04:48.56]  detection of phishing links right Microsoft's got both sides of the
+[00:04:48.56 -> 00:04:52.28]  connection when they've got Defender in where they're seeing the login coming
+[00:04:52.28 -> 00:04:55.88]  through but they now have the endpoint if you have Defender running in
+[00:04:55.88 -> 00:04:59.72]  some things they can detect those phishing sites that maybe you wouldn't
+[00:04:59.72 -> 00:05:02.88]  detect with it just you're running you're setting the ones where it
+[00:05:02.88 -> 00:05:07.88]  gives them an additional telemetry on those man in the middle attacks so I
+[00:05:07.88 -> 00:05:11.72]  think that's the feature that that really gets my attention yeah I think it's
+[00:05:11.72 -> 00:05:15.72]  a good point on like this whole concept it's some quote I don't know who exactly
+[00:05:15.72 -> 00:05:19.28]  it's from but it's like you know Defender's thinking checklist and
+[00:05:19.28 -> 00:05:23.16]  attackers thinking graphs you know in the sense of like how does that chain
+[00:05:23.16 -> 00:05:27.20]  event that's kind of what Microsoft's E5 security bundle is pitching right is
+[00:05:27.20 -> 00:05:31.36]  this attack graph that you know links in evidence from your email and your
+[00:05:31.36 -> 00:05:35.20]  endpoint and your user identity and then connects it to say this is a high
+[00:05:35.20 -> 00:05:40.16]  correlation for potential breach or malicious event that we can see to your
+[00:05:40.20 -> 00:05:44.32]  point on connect the email to the endpoint at that layer for phishing
+[00:05:44.32 -> 00:05:48.60]  activity in the browser so I think that's you know a huge piece to and I think
+[00:05:48.60 -> 00:05:52.04]  your spot I was gonna mention that too that you brought up around I think the
+[00:05:52.04 -> 00:05:55.24]  biggest reason in our space from the server side is because it's not you
+[00:05:55.24 -> 00:05:58.60]  know multi-tenant capable right out of the gate where you can start to push
+[00:05:58.60 -> 00:06:03.64]  policies that you would carry over into every single client right and in some
+[00:06:03.64 -> 00:06:06.80]  of the ways that you would want to streamline your operations but then you
+[00:06:06.80 -> 00:06:11.32]  also get the heuristics around you know all of your endpoints in one spot and can
+[00:06:11.32 -> 00:06:14.72]  correlate different events there without a pivot to different defender
+[00:06:14.72 -> 00:06:19.12]  portals there's another you know piece to that as well too and this extends
+[00:06:19.12 -> 00:06:23.72]  beyond just you know the endpoint it can also be on your Windows servers if you
+[00:06:23.72 -> 00:06:28.72]  have to support that today as well too and that can also support defender
+[00:06:28.72 -> 00:06:32.72]  and passive mode right as an example and so you guys could get that
+[00:06:32.72 -> 00:06:36.52]  leverage I think the other big thing you know that you get with this is
+[00:06:36.52 -> 00:06:40.68]  you can dictate and I think the the wording of it I don't know if you feel
+[00:06:40.68 -> 00:06:44.24]  the same it's kind of confusing to me where it's like defenders in passive mode
+[00:06:44.24 -> 00:06:51.36]  but you can turn it into block mode what that is actually that like I like to
+[00:06:51.36 -> 00:06:54.52]  think about in the sense of the funnel if like Sentinel-1 does its job and it
+[00:06:54.52 -> 00:06:59.76]  analyzes some event or you know action on the endpoint and it says hey I don't
+[00:06:59.76 -> 00:07:03.32]  think this is malicious then Microsoft could could come in at the end of that
+[00:07:03.32 -> 00:07:07.20]  and still say this is malicious and it could take action you know in block
+[00:07:07.20 -> 00:07:12.44]  events and take that that next step which it's confusing to me because it
+[00:07:12.44 -> 00:07:16.84]  obviously like saying passive in block mode is a bit of an yes more on this a
+[00:07:16.84 -> 00:07:21.72]  bit of a contrast there but I think what I've seen with that and other
+[00:07:21.72 -> 00:07:25.16]  environments of the here your experience too is that sometimes that does create
+[00:07:25.16 -> 00:07:29.40]  conflict with your existing EDR don't know if you've seen that as well too
+[00:07:29.48 -> 00:07:34.44]  but just from some deployments yeah I think it's interesting that Microsoft has a
+[00:07:34.44 -> 00:07:38.44]  passive mode it's a very interesting play right it's kind of an unusual Microsoft
+[00:07:38.44 -> 00:07:41.16]  play they usually want to own the market but I think they understood that they
+[00:07:41.16 -> 00:07:45.48]  were they needed to play nice with others and it's cool the Microsoft will go
+[00:07:45.48 -> 00:07:49.00]  into passive mode automatically if you run in another EDR and you've got
+[00:07:49.00 -> 00:07:53.32]  defender to enable it'll detect that EDR and go into passive mode which is a
+[00:07:53.32 -> 00:07:58.04]  big win for those of us in in the space because I remember you know number
+[00:07:58.04 -> 00:08:01.32]  of times throughout my career where you accidentally had two antivirus is running
+[00:08:01.32 -> 00:08:05.24]  on the same machine and nothing turns a high end computer into
+[00:08:05.24 -> 00:08:08.92]  potato like two antivirus is fighting over a computer it's just
+[00:08:08.92 -> 00:08:14.44]  nothing's ever gonna work right it's brutal but defender does it natively
+[00:08:14.44 -> 00:08:19.80]  although we can also force it with with some command line keys with some
+[00:08:19.80 -> 00:08:23.48]  you know registry keys or different ways you can you can force it which I
+[00:08:23.48 -> 00:08:27.16]  think is worth discussing and maybe we'll circle back to that but I'm with
+[00:08:27.16 -> 00:08:30.76]  you I think I think the block mode is a really nice
+[00:08:30.76 -> 00:08:35.32]  failsafe of hey I've got somebody else watching and if my primary EDR misses
+[00:08:35.32 -> 00:08:39.40]  something my secondary EDR is gonna catch it
+[00:08:39.40 -> 00:08:43.24]  but I think you could get you could get yourself in trouble there for sure
+[00:08:43.24 -> 00:08:46.92]  of like which which product is doing what I think that needs to be done
+[00:08:46.92 -> 00:08:50.20]  carefully it because like you said troubleshooting that I got an agent
+[00:08:50.20 -> 00:08:53.16]  off you know I got an endpoint offline is it defender or is it set in a
+[00:08:53.16 -> 00:08:58.04]  wine yeah you got some digging to do to figure that out so yeah I think the other
+[00:08:58.04 -> 00:09:01.64]  thing that I've seen and because I've been you know working with other
+[00:09:01.64 -> 00:09:04.92]  customers and partners on this more recently from a consulting perspective
+[00:09:04.92 -> 00:09:08.20]  it's just around you know everybody's looking to get
+[00:09:08.20 -> 00:09:11.40]  get ready right and start to utilize some more of the
+[00:09:11.40 -> 00:09:15.64]  endpoint protection features that you do get like endpoint DLP
+[00:09:15.64 -> 00:09:19.88]  is a great example now that's in purview that does still require like an
+[00:09:19.88 -> 00:09:25.40]  E5 add-on license but it is another benefit of running
+[00:09:25.40 -> 00:09:28.84]  defender in passive mode right because you still get to utilize
+[00:09:28.84 -> 00:09:33.40]  endpoint DLP because it's underlying sensor is still defender
+[00:09:33.40 -> 00:09:37.32]  for what you're using and so you can begin to enforce policies that
+[00:09:37.32 -> 00:09:41.16]  would traditionally do what you had with like windows information protection
+[00:09:41.16 -> 00:09:45.80]  right preventing cut copy paste into uncomplaint locations are now shadow
+[00:09:45.80 -> 00:09:48.92]  AI right if you right want to prevent people from
+[00:09:48.92 -> 00:09:54.28]  copying corporate data into deep seek as an example you can use endpoint DLP to
+[00:09:54.28 -> 00:09:57.64]  do that and you can do that across browsers you know that they would be
+[00:09:57.64 -> 00:10:01.24]  using whether that's chrome or edge in you know there's there's
+[00:10:01.24 -> 00:10:05.00]  levels of details with that about what extensions you need things like that
+[00:10:05.00 -> 00:10:08.68]  but just another reason why I don't see it I don't
+[00:10:08.68 -> 00:10:12.36]  as soon as you you feel the same just turning into passive mode without
+[00:10:12.36 -> 00:10:15.72]  block mode is a different story but passive mode alone I feel like
+[00:10:15.72 -> 00:10:19.48]  is a pretty safe deployment in modern ecosystems I would
+[00:10:19.48 -> 00:10:23.24]  give that caveat as well too but I think it's
+[00:10:23.24 -> 00:10:26.20]  you know for the benefits that you get it's definitely worth
+[00:10:26.20 -> 00:10:29.56]  trying especially if you already have the licensing for it
+[00:10:29.56 -> 00:10:33.08]  yeah I tend to agree I think you know so to kind of clarify what's available
+[00:10:33.08 -> 00:10:35.96]  in passive mode you don't get real-time scanning
+[00:10:35.96 -> 00:10:39.64]  you'll get file blocking quarantine you don't get scheduled scans
+[00:10:39.64 -> 00:10:43.64]  but like you said you do get the edr telemetry data and especially if you're
+[00:10:43.64 -> 00:10:47.56]  on e5 now that you have access to your security co-pilot
+[00:10:47.56 -> 00:10:51.64]  to me that's data you want AI is always better with more data
+[00:10:51.64 -> 00:10:55.48]  and so if you're running security co-pilot and crowd strike
+[00:10:55.48 -> 00:10:58.52]  you probably still want passive mode because that the data that security
+[00:10:58.52 -> 00:11:01.96]  co-pilot gets through set null and through collecting all those back in
+[00:11:01.96 -> 00:11:04.84]  piece telemetry is going to help you someday with
+[00:11:04.84 -> 00:11:09.00]  with incident response AI just the security co-pilot just have more data
+[00:11:09.00 -> 00:11:12.20]  to work with you get your threat intelligence update to get to your
+[00:11:12.20 -> 00:11:15.32]  edi block mode if you want it edr block mode
+[00:11:15.32 -> 00:11:18.76]  endpoint dlp as you mentioned is great you can still run your web content
+[00:11:18.76 -> 00:11:22.36]  filtering which can be nice for people trying to eliminate maybe another skew
+[00:11:22.36 -> 00:11:26.20]  how do i do my content filtering well it's built it you've got it
+[00:11:26.20 -> 00:11:30.12]  you get your tax surface reduction signals so it's not running the
+[00:11:30.12 -> 00:11:34.04]  asr i don't think by default but you at least get the data points
+[00:11:34.04 -> 00:11:37.96]  and then you get the behavior analysis and ai detection and microsoft has put
+[00:11:37.96 -> 00:11:41.88]  a lot of money into that ai stuff over the last
+[00:11:41.88 -> 00:11:46.44]  six months a lot of these really interesting announcements on e5 and e7 around
+[00:11:46.44 -> 00:11:52.60]  ai detection i think most of those are relying on that
+[00:11:52.60 -> 00:11:56.84]  defender friend point telemetry so if you want to leverage those but
+[00:11:56.84 -> 00:12:02.76]  still keep your traditional edr defender and passive mode is a huge win
+[00:12:02.76 -> 00:12:08.44]  yeah yeah i think there's in the sense of like
+[00:12:08.44 -> 00:12:11.48]  all the various benefits like you said there's some exclusions like
+[00:12:11.48 -> 00:12:16.20]  asr rules you can enforce those you know on your endpoints that are running
+[00:12:16.20 -> 00:12:19.32]  crowd strike or you know sent no one things like that
+[00:12:19.32 -> 00:12:23.24]  hit telemetry behind what's what's going on there so
+[00:12:23.24 -> 00:12:26.68]  i think asr rules are super powerful we talked about in previous episodes i
+[00:12:26.68 -> 00:12:30.36]  think too of just you know how much they can actually stop but
+[00:12:30.36 -> 00:12:33.96]  they are super disruptive in legacy environments but in modern
+[00:12:33.96 -> 00:12:37.64]  clients you know that seemingly like you can audit it for
+[00:12:37.64 -> 00:12:42.52]  about 45 days and you probably see that nothing's going to really break
+[00:12:42.52 -> 00:12:46.36]  and then enforce that which gives you a lot of really a lot of protections but
+[00:12:46.36 -> 00:12:50.04]  you can't do things like control folder access or you know
+[00:12:50.04 -> 00:12:54.60]  some of the other core features there that that comes with defender
+[00:12:54.60 -> 00:12:58.20]  when we're talking about preventative actions and detection
+[00:12:58.20 -> 00:13:01.72]  but i think your third party edr should be
+[00:13:01.72 -> 00:13:04.20]  doing those obviously in lieu of them and that's kind of why you've chosen
+[00:13:04.28 -> 00:13:08.52]  them to begin with is to to have a crowd strike or send a one prevent that
+[00:13:08.52 -> 00:13:12.04]  type of activity yourself so it's really just about
+[00:13:12.04 -> 00:13:15.40]  maximizing that that side benefit as well to it
+[00:13:15.40 -> 00:13:18.92]  i think from a like you mentioned configuration as well too right like i
+[00:13:18.92 -> 00:13:22.44]  think there's a couple of considerations there one of which is that it should
+[00:13:22.44 -> 00:13:26.60]  naturally happen on devices that are running av on your endpoints like it
+[00:13:26.60 -> 00:13:30.20]  should naturally activate and turn into passive mode without having you having
+[00:13:30.20 -> 00:13:33.48]  to do anything explicit you can't force it to your point on
+[00:13:33.48 -> 00:13:38.12]  you know the registry editor in the sense of pushing registry keys out
+[00:13:38.12 -> 00:13:41.72]  to go ahead and enforce it into active mode or passive mode
+[00:13:41.72 -> 00:13:45.80]  and specifically with windows server you have to explicitly say that
+[00:13:45.80 -> 00:13:49.96]  in the registry for that piece of it but it's pretty lightweight
+[00:13:49.96 -> 00:13:54.28]  obviously to you know activate turn on so even if you're thinking about this
+[00:13:54.28 -> 00:13:57.72]  from like well i've got my devices in in tune
+[00:13:57.72 -> 00:14:01.24]  how would i go about doing this it's as simple as creating a defender for
+[00:14:01.24 -> 00:14:04.52]  business or defender for endpoint profile and just
+[00:14:04.52 -> 00:14:08.84]  activating you know that service and getting the device is enrolled
+[00:14:08.84 -> 00:14:12.04]  and then you'll start to see that i'd obviously still recommend
+[00:14:12.04 -> 00:14:15.80]  doing a pilot you know and testing it out with your your flay depending on
+[00:14:15.80 -> 00:14:18.12]  what edr you're using because we're referencing
+[00:14:18.12 -> 00:14:21.08]  crowd striking set in a one quite a bit in this
+[00:14:21.08 -> 00:14:24.92]  this podcast but you could you could have any one of them right like bit
+[00:14:24.92 -> 00:14:28.76]  bit defender sofos whatever you know might exist there and they
+[00:14:29.00 -> 00:14:32.20]  have their uniqueness you know with that as well too that you just have to
+[00:14:32.20 -> 00:14:35.96]  keep in consideration especially as they continue to update as well
+[00:14:35.96 -> 00:14:40.20]  yeah yeah i think the best practice would be if you're gonna run this as a
+[00:14:40.20 -> 00:14:45.08]  as an intentional service i would throw the registry key just in case
+[00:14:45.08 -> 00:14:47.80]  you know because if they do start working on top of each other that's a
+[00:14:47.80 -> 00:14:50.36]  concern i think passive mode's an interesting
+[00:14:50.36 -> 00:14:53.40]  equation if you're thinking about migrating away from an existing edr and
+[00:14:53.40 -> 00:14:56.44]  you want to you want to kind of test flight it right i think it's a
+[00:14:56.44 -> 00:14:58.76]  really interesting way to deploy defender
+[00:14:58.76 -> 00:15:02.76]  see what it sees see how it's running maybe you have a few machines but you've
+[00:15:02.76 -> 00:15:06.44]  got to run in across your fleet i think exclusions are useful as
+[00:15:06.44 -> 00:15:09.96]  well on both sides you know running exclusions in
+[00:15:09.96 -> 00:15:13.88]  defender for your other antivirus especially if you're going in block
+[00:15:13.88 -> 00:15:17.72]  mode i would be careful to make sure you put exclusions into defender
+[00:15:17.72 -> 00:15:20.60]  and you probably want to look at the exclusions for defender in your
+[00:15:20.60 -> 00:15:24.04]  your edr even though they run alongside each other pretty well
+[00:15:24.04 -> 00:15:27.88]  it's just best best practices you don't want some folder that
+[00:15:27.88 -> 00:15:31.80]  either antivirus is using to stage some data trigger in the other one
+[00:15:31.80 -> 00:15:36.36]  so but i do think i do think it's a really cool thing to be able to
+[00:15:36.36 -> 00:15:39.48]  be able to play with both of them at the same time and like you said
+[00:15:39.48 -> 00:15:42.44]  it'll work alongside a lot of different antiviruses i don't think it's as picky
+[00:15:42.44 -> 00:15:45.24]  about what the other antivirus is is it's more
+[00:15:45.24 -> 00:15:48.84]  looking for antiviruses that have registered themselves with the
+[00:15:48.84 -> 00:15:52.60]  windows security center as an active antivirus right so it's
+[00:15:52.68 -> 00:15:56.76]  pretty pretty seamless in that sense
+[00:15:56.76 -> 00:16:00.52]  yeah good call out on the servers needing the key call you know laid that
+[00:16:00.52 -> 00:16:04.52]  put in there i think i think servers have always been
+[00:16:04.52 -> 00:16:08.60]  a little bit of a weird space in defender anyways you know the license thing's a
+[00:16:08.60 -> 00:16:11.64]  little funky deployments a little funky it's such a
+[00:16:11.64 -> 00:16:15.48]  in-tune centric product on the end point it gets a little weird on the
+[00:16:15.48 -> 00:16:17.80]  servers but um you know i know a lot of people
+[00:16:17.80 -> 00:16:23.00]  run it and it's a great product so um yeah go ahead
+[00:16:23.00 -> 00:16:26.28]  i was gonna say yeah it definitely doesn't come up that much like i you know
+[00:16:26.28 -> 00:16:30.28]  and all the customers that we talk to at cloud capsule it's rare that i'll find
+[00:16:30.28 -> 00:16:34.44]  somebody doing the full defender for server deployment
+[00:16:34.44 -> 00:16:37.56]  i think it has a lot to do with what you mentioned which is the licensing is
+[00:16:37.56 -> 00:16:41.32]  pretty confusing and it's an add-on and you know if you have to figure all
+[00:16:41.32 -> 00:16:45.32]  that out as part of it but and we also have obviously
+[00:16:45.32 -> 00:16:48.76]  hopefully you know more people moving away from servers and getting into
+[00:16:48.76 -> 00:16:52.92]  modern deployments that are serverless and just actor directory
+[00:16:52.92 -> 00:16:58.12]  and you're joined and in tune enabled so there's a lot there you know in that
+[00:16:58.12 -> 00:17:01.96]  sense but i think you know to get that additional
+[00:17:01.96 -> 00:17:05.80]  security on the servers if you are managing them it's nice as well too
+[00:17:05.80 -> 00:17:09.32]  because you can still do all the features we talked about
+[00:17:09.32 -> 00:17:12.68]  with software vulnerability management things like that obviously on a server you
+[00:17:12.68 -> 00:17:15.96]  would hope that you wouldn't have you know too many
+[00:17:15.96 -> 00:17:19.48]  pieces of software being installed but on the ones you do
+[00:17:19.48 -> 00:17:22.92]  you can monitor them for those cvs and things like that as well
+[00:17:22.92 -> 00:17:28.76]  and that could be um obviously you know even just that os itself depending on
+[00:17:28.76 -> 00:17:32.36]  you know what stage of it's a lifecycle you know that it's in as well too and
+[00:17:32.36 -> 00:17:35.72]  in what you're thinking about for renewals and all of that
+[00:17:35.72 -> 00:17:38.84]  yeah i see a lot more of the defender for servers
+[00:17:38.84 -> 00:17:42.20]  on the enterprise right medium and large businesses where
+[00:17:42.20 -> 00:17:45.56]  they're fully settled on the microsoft stack and you know
+[00:17:45.56 -> 00:17:48.44]  it is a little confusing but it's you know we can help you navigate it there's
+[00:17:48.44 -> 00:17:51.72]  you know standalone licenses you can add nice license it through
+[00:17:51.72 -> 00:17:55.96]  azure arc or azure security center you know there's a number of ways to license it
+[00:17:55.96 -> 00:17:59.56]  so if i agree with you in the small business space i see a lot less defender
+[00:17:59.56 -> 00:18:03.00]  on servers and and for the various reasons you mentioned
+[00:18:03.00 -> 00:18:08.44]  um i do think the the visibility of data in the microsoft portals is a big
+[00:18:08.44 -> 00:18:11.72]  win uh we talked about insecurity co-pilot but i
+[00:18:11.72 -> 00:18:15.48]  think even if you're not on e5 if you're on business premium
+[00:18:15.48 -> 00:18:19.56]  the defender xdr portal also gets more data from defender
+[00:18:19.56 -> 00:18:23.16]  if you've got it if you've got it configured in passive mode and
+[00:18:23.16 -> 00:18:26.28]  i see microsoft investing quite a bit in that and if you're doing
+[00:18:26.28 -> 00:18:29.48]  you know incident response in small business been able to use something
+[00:18:29.48 -> 00:18:33.64]  like the defender xdr portal to do some threat hunting and just
+[00:18:33.64 -> 00:18:37.80]  pull correlate details is a big value you know anytime you're doing incident
+[00:18:37.80 -> 00:18:40.76]  response the more data you have the easier your
+[00:18:40.76 -> 00:18:44.28]  life is it gets painful when you're missing a couple data points
+[00:18:44.28 -> 00:18:47.88]  so yeah i think that's a big gap in our space today i mean i think a lot of
+[00:18:47.88 -> 00:18:51.32]  people and like to your point i think it's because of the management burden
+[00:18:51.32 -> 00:18:56.44]  for msp specifically as well but i think people really only utilize like how
+[00:18:56.44 -> 00:19:00.36]  much that they have in that portal from just you know the correlation of you
+[00:19:00.36 -> 00:19:03.64]  know even if you talk about tax surface disruption
+[00:19:03.64 -> 00:19:06.92]  from microsoft it's something that you get a basic form of in business
+[00:19:06.92 -> 00:19:09.80]  premium and then if you're on the e5 suite you
+[00:19:09.80 -> 00:19:13.40]  should definitely be taking advantage of that even if you are using crutch like
+[00:19:13.40 -> 00:19:17.88]  because it can do automated disruption you know events for you like actual
+[00:19:17.88 -> 00:19:22.04]  sore type of activity right in the vents where you have
+[00:19:22.04 -> 00:19:25.88]  a risky user that's open the phishing email and they've correlated all these
+[00:19:25.88 -> 00:19:30.04]  events for you and included in that is the endpoint you know and
+[00:19:30.04 -> 00:19:33.40]  identifying if there was telemetry coming from that endpoint that would
+[00:19:33.40 -> 00:19:37.16]  signal like a malicious event or a file execution
+[00:19:37.16 -> 00:19:40.44]  or something like that maybe your edr misses because it
+[00:19:40.44 -> 00:19:44.28]  doesn't have the data points that says this user clicked on a phishing email
+[00:19:44.28 -> 00:19:47.64]  then a malicious attachment was downloaded and so on and so forth you
+[00:19:47.64 -> 00:19:51.32]  would hope that but that's where it's also nice to have that
+[00:19:51.32 -> 00:19:55.96]  additional signaling that says well this is why we think it's a higher risk
+[00:19:55.96 -> 00:19:59.48]  because of all these data points and that's really the true power i mean i
+[00:19:59.48 -> 00:20:02.60]  i don't like to discredit because i think those tools are valuable you know
+[00:20:02.60 -> 00:20:05.32]  like you said before and certainly there's the management piece that we
+[00:20:05.32 -> 00:20:08.28]  do have to heavily consider when it comes to
+[00:20:08.28 -> 00:20:12.84]  you know that footprint but you know if it's correlating everything into
+[00:20:12.84 -> 00:20:15.72]  defender alerts then you have native tools like
+[00:20:15.72 -> 00:20:19.56]  lighthouse honestly um you know i know lighthouse has some gaps
+[00:20:19.56 -> 00:20:23.24]  uh in the in the general sense of what it can be doing but
+[00:20:23.24 -> 00:20:26.68]  it does correlate all your customer defender alerts in one spot
+[00:20:26.68 -> 00:20:29.88]  and you can link out to them you know so you're pivoting into different
+[00:20:29.88 -> 00:20:33.48]  portals though but you're still triaging from the same location so
+[00:20:33.48 -> 00:20:36.68]  it's a step towards the right direction it's not what we'd want i would say
+[00:20:36.68 -> 00:20:39.96]  100 you know um from a management console like
+[00:20:39.96 -> 00:20:45.48]  sentinel one is as an example but um it certainly is i know a lot of
+[00:20:45.48 -> 00:20:49.16]  MSPs i would say that that are full microsoft shops that use that
+[00:20:49.16 -> 00:20:52.84]  completely as well too just to get you know maximum bang for their buck but
+[00:20:52.84 -> 00:20:56.36]  also it's from we took my gardener magic
+[00:20:56.36 -> 00:20:59.72]  quadrant perspective like it's an upper right right if you're
+[00:20:59.72 -> 00:21:03.32]  talking about mid-market or enterprise that are looking to evaluate
+[00:21:03.40 -> 00:21:06.76]  what's on what's on the market that they could use
+[00:21:06.76 -> 00:21:10.84]  i agree and i think if you look at like microsoft moving into this e7 space right
+[00:21:10.84 -> 00:21:15.00]  new skew launches you know what is it well you get your e5
+[00:21:15.00 -> 00:21:18.44]  plus your you know your co-pilot and your
+[00:21:18.44 -> 00:21:23.24]  interest suite and your agent 365 well i think that interest suite
+[00:21:23.24 -> 00:21:27.48]  in the e7 scenario is interesting from microsoft perspective because i think
+[00:21:27.48 -> 00:21:30.12]  they're making that play for that zero trust
+[00:21:30.12 -> 00:21:34.20]  but if you want to do zero trust again more data points help that zero trust
+[00:21:34.20 -> 00:21:37.16]  equation go better so even if you're on e7 you're like
+[00:21:37.16 -> 00:21:40.28]  now we're keeping our crowd strike and you're going to want that defender
+[00:21:40.28 -> 00:21:43.16]  passive mode for all the zero trust signals again all the things we've
+[00:21:43.16 -> 00:21:46.36]  talked about like where was that link clicked on were they on global secure
+[00:21:46.36 -> 00:21:49.32]  access do i know more about the endpoint do i know what
+[00:21:49.32 -> 00:21:52.60]  you'll process clicked on that link there's just a lot of data points that
+[00:21:52.60 -> 00:21:55.24]  i think are missing if you don't have some of those
+[00:21:55.24 -> 00:21:58.52]  heuristics and um you know microsoft's clearly
+[00:21:58.52 -> 00:22:02.28]  using that and defender agent to pull a lot of data
+[00:22:02.28 -> 00:22:07.00]  in into the system so well i think they're investing so much in the purview right
+[00:22:07.00 -> 00:22:09.96]  now because of the ai you know front and endpoint
+[00:22:09.96 -> 00:22:12.84]  d.o.p is going to be a major thing like right now i'm doing
+[00:22:12.84 -> 00:22:16.28]  implementation with the customer for insider risk management
+[00:22:16.28 -> 00:22:19.72]  and it uses endpoint d.o.p to track signals of
+[00:22:19.72 -> 00:22:23.24]  people copying things to a usb drive that they're exporting the next full
+[00:22:23.24 -> 00:22:27.08]  trading data it recognizes people mass deleting files or
+[00:22:27.08 -> 00:22:30.44]  mass downloading files to their endpoint and that's all coming from the
+[00:22:30.44 -> 00:22:34.20]  defender's sensor so you just need to have that active again it's not
+[00:22:34.20 -> 00:22:37.48]  enforcing anything today we're just analyzing you know where
+[00:22:37.48 -> 00:22:41.08]  there could be potential risk and we've even identified people
+[00:22:41.08 -> 00:22:44.20]  you know sending things to their personal gmail that have sensitive
+[00:22:44.20 -> 00:22:47.80]  information in them right as an example and this is coming from their
+[00:22:47.80 -> 00:22:51.16]  explorer right on their desktop and so it's it's a really
+[00:22:51.16 -> 00:22:53.64]  fascinating piece it's taking a lot of time to get
+[00:22:53.64 -> 00:22:57.08]  up and running because it's you know at a production scale
+[00:22:57.08 -> 00:23:00.36]  there's so much activity going on that they're collecting now but
+[00:23:00.36 -> 00:23:04.20]  it just further emphasizes like why you would want to have this on because
+[00:23:04.20 -> 00:23:06.76]  it's again part of your licensing in most cases
+[00:23:06.76 -> 00:23:10.44]  and um you know if you're talking about
+[00:23:10.44 -> 00:23:14.20]  data governance at scale especially for smb not even talking about mid-market
+[00:23:14.20 -> 00:23:17.56]  or enterprise um then we're we're saying like
+[00:23:17.56 -> 00:23:21.08]  hey there's a lot you would need help with tool-wise that doesn't really
+[00:23:21.08 -> 00:23:24.76]  exist today you know at a mask i don't know if other solutions
+[00:23:24.76 -> 00:23:28.44]  and maybe because we've never had to look this hard but that do this like
+[00:23:28.44 -> 00:23:34.04]  endpoint d.o.p consideration right or d.o.p at this scale for businesses because
+[00:23:34.04 -> 00:23:38.36]  even with microsoft solution d.o.p is i think now catching up to where it
+[00:23:38.36 -> 00:23:42.36]  should have been years ago because they're having to invest so much into
+[00:23:42.36 -> 00:23:45.64]  what this should actually look like for an organization because it's
+[00:23:45.64 -> 00:23:49.08]  being put under a microsoft or a magnifying glass but
+[00:23:49.80 -> 00:23:52.60]  there's a lot there that i think that you'll continue to want to
+[00:23:52.60 -> 00:23:57.40]  maximize your investment in yeah i we even think like i think of like defender
+[00:23:57.40 -> 00:24:01.96]  for cloud apps right again cloud app discovery you know that was really a
+[00:24:01.96 -> 00:24:05.16]  really great product but it's also still very much architecturally
+[00:24:05.16 -> 00:24:08.20]  got a lot of roots in firewall logs right let me see the traffic coming
+[00:24:08.20 -> 00:24:11.48]  through the firewall you know and i think the endpoint
+[00:24:11.48 -> 00:24:15.32]  d.o.p is a better way to get there you know and wrote you know
+[00:24:15.32 -> 00:24:18.92]  shadow ai detection you got to do that on the endpoint and you got to do it
+[00:24:18.92 -> 00:24:22.92]  with lots of signal processing hey i've got a browser plugin but more
+[00:24:22.92 -> 00:24:26.44]  importantly i saw you know a connection to this ip that's a
+[00:24:26.44 -> 00:24:30.68]  known chat gpt ip and i saw you know 500 megs of data go
+[00:24:30.68 -> 00:24:34.44]  back and forth that's data points that are hard to get in
+[00:24:34.44 -> 00:24:37.64]  our world without like you said expensive or complicated
+[00:24:37.64 -> 00:24:41.40]  you know third-party tools but it's built in to the microsoft stack
+[00:24:41.40 -> 00:24:44.28]  you know if you're licensed for it and you have it configured so
+[00:24:44.28 -> 00:24:48.28]  i do think that the the place for running defender in passive mode is
+[00:24:48.28 -> 00:24:51.64]  going to be more and more common as people build out
+[00:24:51.64 -> 00:24:55.00]  you know their environments and i you know i totally understand people one in a
+[00:24:55.00 -> 00:24:58.44]  third layer you know another layer of antivirus you know hey i trust in the
+[00:24:58.44 -> 00:25:01.64]  one i get it you know it's scalable it's consistent
+[00:25:01.64 -> 00:25:04.92]  you've trusted it's never let you down great um
+[00:25:04.92 -> 00:25:08.20]  throw this in in passive mode to get those extra data points and see how it
+[00:25:08.20 -> 00:25:11.72]  goes do it you always can do a test group you know you can you can scope
+[00:25:11.72 -> 00:25:15.56]  it that's the nice thing if you got in-tune running pick a pilot group see
+[00:25:15.56 -> 00:25:19.08]  if it affects performance see what data you get see if you like it
+[00:25:19.08 -> 00:25:23.80]  um doesn't have to be a you know 500 endpoints at once decision so
+[00:25:23.80 -> 00:25:26.92]  i think it's a real real great opportunity in the space
+[00:25:26.92 -> 00:25:30.76]  yeah and i think to your point there it's a good good separation too of like
+[00:25:30.76 -> 00:25:33.72]  traditionally we would get this only through firewall logs and you had to
+[00:25:33.72 -> 00:25:37.72]  have a managed firewall and all of this set up with third-party tools
+[00:25:37.72 -> 00:25:41.00]  you know that you would have to spend additional work to put into place and
+[00:25:41.00 -> 00:25:45.00]  users might have to vpn into and all of this and now you just have a
+[00:25:45.00 -> 00:25:49.40]  active sensor that's built into the os doesn't require a third-party agent
+[00:25:49.40 -> 00:25:53.00]  you know that is actively picking up all these
+[00:25:53.00 -> 00:25:57.00]  third-party apps not just shadow a i we see that a lot now too
+[00:25:57.00 -> 00:26:00.52]  pointing customers into like all the enthropic and claud
+[00:26:00.52 -> 00:26:05.00]  in gpt usage right on the network that they have to know exist but it's like
+[00:26:05.00 -> 00:26:08.36]  in their face then and they could see what exactly users are using it to your
+[00:26:08.36 -> 00:26:12.52]  point like the data transferred but there's also the traditional mcas
+[00:26:12.60 -> 00:26:16.12]  concepts of like what third-party file storage is being used
+[00:26:16.12 -> 00:26:20.20]  right we see dropbox we see google drive we see all these different apps being
+[00:26:20.20 -> 00:26:22.92]  used and it's like well the only compliant one should be
+[00:26:22.92 -> 00:26:27.08]  one drive so what what data is going into those that's personal
+[00:26:27.08 -> 00:26:31.88]  uh one drive account or uh what box accounts or dropbox or whatever it might be
+[00:26:31.88 -> 00:26:35.32]  so there's all that to consider too and you know you talked about gsa global
+[00:26:35.32 -> 00:26:39.96]  secure access as like uh you know sassy solution and all this supports
+[00:26:39.96 -> 00:26:44.52]  a remote workforce right so that's the other you could be hybrid you could be
+[00:26:44.52 -> 00:26:48.20]  totally remote and you don't have to worry about all this infrastructure
+[00:26:48.20 -> 00:26:52.60]  or even users leveraging a vpn which in the past few years has been getting
+[00:26:52.60 -> 00:26:57.40]  breached a lot um or has a lot of vulnerabilities that we have to consider
+[00:26:57.40 -> 00:27:00.76]  and i don't think a sassy solution is 100 necessary
+[00:27:00.76 -> 00:27:05.56]  in all use cases but it certainly is a great um solution for
+[00:27:05.56 -> 00:27:08.84]  providing these additional protections or providing a certain secure network
+[00:27:08.84 -> 00:27:11.32]  connection that doesn't require that users
+[00:27:11.32 -> 00:27:14.68]  have you know this third-party on their system
+[00:27:14.68 -> 00:27:18.44]  and integrates natively to conditional access so there's a lot there
+[00:27:18.44 -> 00:27:21.40]  like it just layers in right that's the whole purpose of
+[00:27:21.40 -> 00:27:25.80]  of normalizing to that stack is then you can manage in one location so
+[00:27:25.80 -> 00:27:29.72]  it's also thinking about like that that balance of like well maybe i'm
+[00:27:29.72 -> 00:27:32.76]  spending a little bit extra time because everything and all the alerts on in
+[00:27:32.76 -> 00:27:35.16]  one sent in a one portal and again we're not knocking
+[00:27:35.16 -> 00:27:39.40]  send a one in this case i think it's a great sure yeah um but i think it's like
+[00:27:39.40 -> 00:27:43.40]  well then what else do we get we get defender for cloud apps we get
+[00:27:43.40 -> 00:27:47.56]  you know the sassy solution we get you know these uh vulnerabilities of all of
+[00:27:47.56 -> 00:27:50.92]  our software in one place so you start to talk about like
+[00:27:50.92 -> 00:27:54.28]  maybe like eight different tools that you don't have to have anymore
+[00:27:54.28 -> 00:27:57.48]  and you know all the bills you have to pay for that and all the clients that
+[00:27:57.48 -> 00:28:00.12]  you have to arrange in that and when you onboard a new client
+[00:28:00.12 -> 00:28:03.00]  you have to go through eight different portals just to get them on boarded
+[00:28:03.48 -> 00:28:08.12]  versus one so this is like this ripple you know of operational overhead that you
+[00:28:08.12 -> 00:28:12.04]  you have to step back and think like how much is it actually saving me to be in
+[00:28:12.04 -> 00:28:19.00]  this room just edr right yes yes no i agree i agree i think
+[00:28:19.00 -> 00:28:22.52]  microsoft's making a compelling case you know i think uh i think a lot of people
+[00:28:22.52 -> 00:28:25.64]  looked at a seven and went ah this is this is an expensive product what are
+[00:28:25.64 -> 00:28:28.92]  they doing but i think they're building a really
+[00:28:28.92 -> 00:28:32.84]  interesting story and i've spent my opinion for a while now that
+[00:28:32.84 -> 00:28:38.12]  um all the data is the the value comes in the data
+[00:28:38.12 -> 00:28:42.52]  ai is valuable when it has lots of normalized data
+[00:28:42.52 -> 00:28:45.96]  and microsoft has that better than pretty much anybody in the industry and i
+[00:28:45.96 -> 00:28:49.64]  just think more and more people are going to realize hey i i can't
+[00:28:49.64 -> 00:28:53.40]  i can't control my data the same ananthropic i don't have the same
+[00:28:53.40 -> 00:28:56.36]  enterprise security controls because they're not as mature as microsoft they
+[00:28:56.36 -> 00:28:59.08]  don't have per view or e-discovery it's not it's
+[00:28:59.08 -> 00:29:02.04]  going to take it a while to catch up to those products they're going to go
+[00:29:02.12 -> 00:29:07.24]  so microsoft can be my ai and my security and automate it all with ai i think
+[00:29:07.24 -> 00:29:10.04]  it's just going to become a very compelling equation
+[00:29:10.04 -> 00:29:14.28]  and um and the more data they have the better better security they can give
+[00:29:14.28 -> 00:29:16.76]  you the more more things they can correlate and i
+[00:29:16.76 -> 00:29:20.52]  think that's going to be the battleground so i'm very curious to see
+[00:29:20.52 -> 00:29:25.08]  if we've got a small business version of e7 coming i sure hope they are
+[00:29:25.08 -> 00:29:29.72]  considering it i would imagine they are um you can build a bundle but i think
+[00:29:29.72 -> 00:29:33.48]  you know this feeds into that it's like okay you know you're gonna go that route
+[00:29:33.48 -> 00:29:36.60]  you can still run your favorite edr and get all the value out of it through
+[00:29:36.60 -> 00:29:39.72]  passive mode so um real opportunity in the industry
+[00:29:39.72 -> 00:29:43.00]  to take advantage of an additional tool some people don't quite understand
+[00:29:43.00 -> 00:29:46.36]  because i think we have a lot of hey never run two edr so you'll ruin your
+[00:29:46.36 -> 00:29:50.04]  life kind of mindset out there i think defenders just a little different
+[00:29:50.04 -> 00:29:54.04]  in that space so um well nick thank you for uh
+[00:29:54.04 -> 00:29:57.64]  nerden out on this a little bit with me uh it's really cool to think about
+[00:29:58.36 -> 00:30:01.88]  hopefully it's useful to some people on you know obviously if if you want help
+[00:30:01.88 -> 00:30:04.52]  getting this enabled we'd be happy to help you hear it
+[00:30:04.52 -> 00:30:07.88]  source pass um center of excellence for microsoft we'd love to help you walk
+[00:30:07.88 -> 00:30:11.64]  through getting this deployed in in passive mode it's available
+[00:30:11.64 -> 00:30:15.00]  you know in your business premium your e3 your e5 you've got access to
+[00:30:15.00 -> 00:30:19.88]  capability or standalone defender licenses so it's worth worth reviewing so
+[00:30:19.88 -> 00:30:23.32]  thanks for your time nick um where where can they they keep in touch with
+[00:30:23.32 -> 00:30:25.72]  you what's the best way to keep up with all the amazing content you're
+[00:30:25.72 -> 00:30:28.76]  putting out um if you guys follow t-minus
+[00:30:28.76 -> 00:30:32.68]  365 on youtube that's uh posts every week on there so
+[00:30:32.68 -> 00:30:36.44]  um you guys can check out my post videos about mostly security but
+[00:30:36.44 -> 00:30:40.68]  going down kind of more of an ai focus uh lately as well too just
+[00:30:40.68 -> 00:30:43.56]  because there there's a little bit of a hype right now and it gets a little bit
+[00:30:43.56 -> 00:30:48.44]  more good um so yeah that's a good place that's awesome well it's also
+[00:30:48.44 -> 00:30:51.16]  easier to make the content there's always something new to play with and
+[00:30:51.16 -> 00:30:54.20]  explore right so yeah there's a lot every week
+[00:30:54.20 -> 00:30:58.44]  yeah absolutely awesome well thank you for your time and
+[00:30:58.44 -> 00:31:02.84]  thanks for tuning in to the podcast and we'll catch you next time on the
+[00:31:02.84 -> 00:31:05.64]  demystifying
