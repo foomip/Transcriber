@@ -4,6 +4,7 @@ import types
 import pytest
 
 from lib import analysis
+import lib.analysis.backend as analysis_backend
 
 
 BASE_META = {
@@ -60,7 +61,7 @@ def test_detect_analysis_backend_reports_rocm(monkeypatch):
         lambda: (16 * analysis._GIB, 16 * analysis._GIB),
     )
     monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
-    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 64 * analysis._GIB)
+    monkeypatch.setattr(analysis_backend, "_available_ram_bytes", lambda: 64 * analysis._GIB)
 
     backend = analysis.detect_analysis_backend()
 
@@ -84,8 +85,8 @@ def test_detect_analysis_backend_reports_rocm(monkeypatch):
 def test_detect_analysis_backend_respects_model_override_on_rocm(monkeypatch):
     monkeypatch.setenv(analysis.ANALYSIS_MODEL_ENV, "custom/model")
     monkeypatch.delenv(analysis.ANALYSIS_BACKEND_ENV, raising=False)
-    monkeypatch.setattr(analysis, "_llama_cpp_is_available", lambda: True)
-    monkeypatch.setattr(analysis, "_llama_cpp_model_exists", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
     monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
@@ -109,7 +110,7 @@ def test_detect_analysis_backend_prefers_llama_cpp_on_rocm_when_available(tmp_pa
     monkeypatch.delenv(analysis.ANALYSIS_BACKEND_ENV, raising=False)
     monkeypatch.setenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, str(model_path))
     monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
-    monkeypatch.setattr(analysis, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
     monkeypatch.setattr(
@@ -138,7 +139,7 @@ def test_detect_analysis_backend_forces_llama_cpp_on_rocm_without_import(tmp_pat
     model_path.write_bytes(b"0" * analysis._GIB)
     monkeypatch.setenv(analysis.ANALYSIS_BACKEND_ENV, analysis.LLAMA_CPP_BACKEND_NAME)
     monkeypatch.setenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, str(model_path))
-    monkeypatch.setattr(analysis, "_llama_cpp_is_available", lambda: False)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
     monkeypatch.setattr(
@@ -162,7 +163,7 @@ def test_detect_analysis_backend_downloads_missing_llama_cpp_model(tmp_path, mon
     monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.delenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, raising=False)
     monkeypatch.setenv(analysis.LLAMA_CPP_CACHE_DIR_ENV, str(cache_dir))
-    monkeypatch.setattr(analysis, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
     monkeypatch.setattr(
@@ -177,7 +178,7 @@ def test_detect_analysis_backend_downloads_missing_llama_cpp_model(tmp_path, mon
         model_path.parent.mkdir(parents=True)
         model_path.write_bytes(b"0" * analysis._GIB)
 
-    monkeypatch.setattr(analysis, "_download_llama_cpp_model", fake_download)
+    monkeypatch.setattr(analysis_backend, "_download_llama_cpp_model", fake_download)
 
     backend = analysis.detect_analysis_backend()
 
@@ -255,7 +256,7 @@ def test_rocm_llama_cpp_gpu_layers_uses_safe_vram_budget(tmp_path, monkeypatch):
 def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatch):
     monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_cpu_supports_avx512_bf16", lambda: True)
 
     backend = analysis.detect_analysis_backend()
 
@@ -269,8 +270,8 @@ def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatc
 def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_sufficient(monkeypatch):
     monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
-    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 64 * analysis._GIB)
+    monkeypatch.setattr(analysis_backend, "_cpu_supports_avx512_bf16", lambda: False)
+    monkeypatch.setattr(analysis_backend, "_available_ram_bytes", lambda: 64 * analysis._GIB)
 
     backend = analysis.detect_analysis_backend()
 
@@ -288,8 +289,8 @@ def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_s
 def test_detect_analysis_backend_cpu_without_avx512_bf16_falls_back_to_bf16_when_insufficient_ram(monkeypatch):
     monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(analysis, "_cpu_supports_avx512_bf16", lambda: False)
-    monkeypatch.setattr(analysis, "_available_ram_bytes", lambda: 16 * analysis._GIB)
+    monkeypatch.setattr(analysis_backend, "_cpu_supports_avx512_bf16", lambda: False)
+    monkeypatch.setattr(analysis_backend, "_available_ram_bytes", lambda: 16 * analysis._GIB)
 
     backend = analysis.detect_analysis_backend()
 
@@ -302,7 +303,7 @@ def test_detect_analysis_backend_cpu_without_avx512_bf16_falls_back_to_bf16_when
 def test_cpu_supports_avx512_bf16_returns_true_when_flag_present(tmp_path, monkeypatch):
     cpuinfo = tmp_path / "cpuinfo"
     cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu avx2 avx512f avx512_bf16 sse4_2\n")
-    monkeypatch.setattr(analysis, "_CPUINFO_PATH", str(cpuinfo))
+    monkeypatch.setattr(analysis_backend, "_CPUINFO_PATH", str(cpuinfo))
 
     assert analysis._cpu_supports_avx512_bf16() is True
 
@@ -310,13 +311,13 @@ def test_cpu_supports_avx512_bf16_returns_true_when_flag_present(tmp_path, monke
 def test_cpu_supports_avx512_bf16_returns_false_when_flag_absent(tmp_path, monkeypatch):
     cpuinfo = tmp_path / "cpuinfo"
     cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu avx2 avx512f sse4_2\n")
-    monkeypatch.setattr(analysis, "_CPUINFO_PATH", str(cpuinfo))
+    monkeypatch.setattr(analysis_backend, "_CPUINFO_PATH", str(cpuinfo))
 
     assert analysis._cpu_supports_avx512_bf16() is False
 
 
 def test_cpu_supports_avx512_bf16_returns_false_when_file_missing(monkeypatch):
-    monkeypatch.setattr(analysis, "_CPUINFO_PATH", "/nonexistent/cpuinfo")
+    monkeypatch.setattr(analysis_backend, "_CPUINFO_PATH", "/nonexistent/cpuinfo")
 
     assert analysis._cpu_supports_avx512_bf16() is False
 
@@ -324,13 +325,13 @@ def test_cpu_supports_avx512_bf16_returns_false_when_file_missing(monkeypatch):
 def test_available_ram_bytes_returns_value_from_meminfo(tmp_path, monkeypatch):
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemTotal:       131815760 kB\nMemAvailable:   65536000 kB\n")
-    monkeypatch.setattr(analysis, "_MEMINFO_PATH", str(meminfo))
+    monkeypatch.setattr(analysis_backend, "_MEMINFO_PATH", str(meminfo))
 
     assert analysis._available_ram_bytes() == 65536000 * 1024
 
 
 def test_available_ram_bytes_returns_none_when_file_missing(monkeypatch):
-    monkeypatch.setattr(analysis, "_MEMINFO_PATH", "/nonexistent/meminfo")
+    monkeypatch.setattr(analysis_backend, "_MEMINFO_PATH", "/nonexistent/meminfo")
 
     assert analysis._available_ram_bytes() is None
 
