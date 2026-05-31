@@ -239,8 +239,8 @@ FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 
 # Force a specific image
 ./docker-run-transcribe.sh --image transcriber:rocm-llama meeting_20260527_114300.wav
-> **Deprecated:** `transcriber:rocm` uses the old PyTorch/Transformers ROCm path. Use `--image transcriber:rocm-llama` instead.
 
+> **Deprecated:** `transcriber:rocm` uses the old PyTorch/Transformers ROCm path. Use `--image transcriber:rocm-llama` instead.
 ./docker-run-transcribe.sh --image transcriber:rocm meeting_20260527_114300.wav
 
 # Forward normal transcribe.py flags unchanged
