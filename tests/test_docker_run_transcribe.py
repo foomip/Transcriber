@@ -103,10 +103,14 @@ def _write_executable(path: Path, content: str) -> None:
 
 def _make_env(tmp_path: Path, *, existing_images: str = "") -> tuple[dict[str, str], Path]:
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(exist_ok=True)
 
     docker_path = bin_dir / "docker"
     _write_executable(docker_path, MOCK_DOCKER)
+    
+    nvidia_smi_path = bin_dir / "nvidia-smi"
+    if not nvidia_smi_path.exists():
+        _write_executable(nvidia_smi_path, "#!/usr/bin/env bash\nexit 1\n")
 
     log_path = tmp_path / "docker.log"
     built_path = tmp_path / "built-images.log"

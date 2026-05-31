@@ -60,7 +60,7 @@ is_truthy() {
 }
 
 has_nvidia() {
-    command -v nvidia-smi >/dev/null 2>&1
+    command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1
 }
 
 has_rocm() {

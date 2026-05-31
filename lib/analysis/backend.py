@@ -62,7 +62,7 @@ _CPUINFO_PATH = "/proc/cpuinfo"
 _MEMINFO_PATH = "/proc/meminfo"
 _GIB = 1024 ** 3
 FLOAT32_MIN_RAM_GIB = 32   # float32 weights ~30 GB + headroom for KV cache and OS
-DEFAULT_GPU_HEADROOM_GIB = 7
+DEFAULT_GPU_HEADROOM_GIB = 2
 CPU_OFFLOAD_HEADROOM_GIB = 8
 
 # ---------------------------------------------------------------------------
