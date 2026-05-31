@@ -252,6 +252,20 @@ Add an **Apple Silicon** subsection under the platform notes, covering:
 
 ---
 
+## Dockerization on Apple Silicon
+
+While a Docker-based workflow is planned for Linux/Windows environments (via `Dockerfile.cpu`, `Dockerfile.nvidia`, etc.), **running an Apple Silicon-centered Docker image is natively constrained by Docker for Mac's architecture**:
+
+1. **No GPU Passthrough:** Docker Desktop on macOS runs containers inside a Linux Virtual Machine. Apple's hardware acceleration frameworks—specifically Metal, MPS (`torch.mps`), and MLX—are strictly native to macOS and **cannot be passed through to Linux containers**.
+2. **CPU-Only Execution:** Building an Apple Silicon Docker image (`linux/arm64`) means the container will run efficiently on the M-series CPU, but it will have absolutely **no access to the GPU or Neural Engine**. 
+3. **Implications for New Features:** 
+   - Operations like the newly added `youtube-summarize.py` will function correctly inside an ARM64 Docker container, but Gemma 4 analysis will be limited entirely to CPU-bound performance.
+   - For users seeking full hardware acceleration (such as the 9.5× speedup provided by MLX in Phase 2), they **must** run the pipeline natively on macOS rather than through Docker.
+
+If an Apple Silicon container image is provided for portability/convenience, it will effectively be a build of `Dockerfile.cpu` compiled for the `linux/arm64` architecture, accompanied by documentation explaining the fallback to CPU execution.
+
+---
+
 ## Summary of All File Changes
 
 ### Phase 1
