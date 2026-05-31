@@ -15,3 +15,4 @@ youtube-transcript-api
 
 # Test suite
 pytest>=8
+pytest-cov>=6.0.0
