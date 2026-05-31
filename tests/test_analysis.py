@@ -110,6 +110,7 @@ def test_detect_analysis_backend_prefers_llama_cpp_on_rocm_when_available(tmp_pa
     monkeypatch.delenv(analysis.ANALYSIS_BACKEND_ENV, raising=False)
     monkeypatch.setenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, str(model_path))
     monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
+    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "28000")
     monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
@@ -127,7 +128,8 @@ def test_detect_analysis_backend_prefers_llama_cpp_on_rocm_when_available(tmp_pa
     assert backend.engine == analysis.LLAMA_CPP_BACKEND_NAME
     assert backend.model_id == str(model_path)
     assert backend.model_kwargs["model_path"] == str(model_path)
-    assert backend.model_kwargs["n_ctx"] == analysis.DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE
+    assert backend.model_kwargs["n_ctx"] == analysis._required_llama_cpp_context_size()
+    assert backend.model_kwargs["n_ctx"] > analysis.DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE
     assert backend.model_kwargs["n_batch"] == analysis.DEFAULT_ROCM_LLAMA_CPP_BATCH_SIZE
     assert 0 < backend.model_kwargs["n_gpu_layers"] <= 32
     assert "llama.cpp" in backend.notes[0]
@@ -376,6 +378,84 @@ def test_query_llama_cpp_returns_completion_text():
             "temperature": 0,
         }
     ]
+
+
+def test_required_llama_cpp_context_size_scales_with_transcript_budget(monkeypatch):
+    monkeypatch.delenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, raising=False)
+
+    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "28000")
+    small = analysis._required_llama_cpp_context_size()
+
+    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "120000")
+    large = analysis._required_llama_cpp_context_size()
+
+    # Even the smallest transcript needs more than the legacy 4096 window.
+    assert small > analysis.DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE
+    assert large > small
+    assert large <= analysis.DEFAULT_ROCM_LLAMA_CPP_MAX_CONTEXT_SIZE
+    # Window must hold the whole transcript prompt plus the generation budget.
+    expected_min = 28000 / analysis.LLAMA_CPP_CHARS_PER_TOKEN + analysis.ROCM_ANALYSIS_MAX_NEW_TOKENS
+    assert small >= expected_min
+
+
+def test_required_llama_cpp_context_size_respects_env_override(monkeypatch):
+    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "8192")
+    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "250000")
+
+    assert analysis._llama_cpp_context_size() == 8192
+
+
+class FakeTokenizingLlamaCppModel(FakeLlamaCppModel):
+    def __init__(self, response, context_size):
+        super().__init__(response)
+        self._context_size = context_size
+
+    def n_ctx(self):
+        return self._context_size
+
+    def tokenize(self, text):
+        # One byte per token keeps the arithmetic easy to assert.
+        return list(text)
+
+    def detokenize(self, tokens):
+        return bytes(tokens)
+
+
+def test_fit_prompt_to_context_trims_oversized_prompt():
+    model = FakeTokenizingLlamaCppModel({"choices": [{"text": "ok"}]}, context_size=200)
+    prompt = "x" * 500
+
+    trimmed, max_new_tokens = analysis._fit_prompt_to_context(
+        model, prompt, max_new_tokens=64
+    )
+
+    allowed = 200 - 64 - analysis.model.LLAMA_CPP_CONTEXT_GUARD_MARGIN
+    assert len(trimmed) == allowed
+    assert max_new_tokens == 64
+
+
+def test_fit_prompt_to_context_keeps_small_prompt_untouched():
+    model = FakeTokenizingLlamaCppModel({"choices": [{"text": "ok"}]}, context_size=4096)
+    prompt = "short prompt"
+
+    trimmed, max_new_tokens = analysis._fit_prompt_to_context(
+        model, prompt, max_new_tokens=128
+    )
+
+    assert trimmed == prompt
+    assert max_new_tokens == 128
+
+
+def test_fit_prompt_to_context_noops_without_tokenizer():
+    model = FakeLlamaCppModel({"choices": [{"text": "ok"}]})
+    prompt = "x" * 10_000
+
+    trimmed, max_new_tokens = analysis._fit_prompt_to_context(
+        model, prompt, max_new_tokens=128
+    )
+
+    assert trimmed == prompt
+    assert max_new_tokens == 128
 
 
 def test_content_words_filters_stop_words_and_short_tokens():

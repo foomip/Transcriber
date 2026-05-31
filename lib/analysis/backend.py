@@ -10,6 +10,7 @@ Responsibilities:
 
 import importlib
 import importlib.util
+import math
 import os
 import shutil
 from dataclasses import dataclass
@@ -74,6 +75,14 @@ DEFAULT_ROCM_LLAMA_CPP_BATCH_SIZE = 256
 DEFAULT_ROCM_LLAMA_CPP_LAYER_COUNT = 42
 DEFAULT_ROCM_LLAMA_CPP_GPU_HEADROOM_GIB = 3.0
 DEFAULT_ROCM_LLAMA_CPP_KV_CACHE_GIB = 0.75
+
+# The context window must hold the whole transcript prompt plus the generated
+# report, so it is sized from the transcript character budget rather than a
+# fixed value. gemma-4-E4B is trained for 131072 tokens, which is the ceiling.
+DEFAULT_ROCM_LLAMA_CPP_MAX_CONTEXT_SIZE = 131072
+LLAMA_CPP_CHARS_PER_TOKEN = 3.0
+LLAMA_CPP_CONTEXT_MARGIN_TOKENS = 512
+LLAMA_CPP_CONTEXT_ALIGNMENT = 256
 
 
 # ---------------------------------------------------------------------------
@@ -307,8 +316,29 @@ def _ensure_llama_cpp_model(model_path: str) -> str:
 # llama.cpp parameter helpers
 # ---------------------------------------------------------------------------
 
+def _required_llama_cpp_context_size() -> int:
+    """Size the context window to hold the transcript prompt plus generation.
+
+    The transcript fed to analysis is bounded by ``transcript_char_budget()``,
+    so the context window is derived from the same budget to guarantee the
+    prompt fits. The result is clamped to the model's trained context window.
+    """
+    from lib.report import transcript_char_budget
+
+    budget_chars = transcript_char_budget()
+    prompt_tokens = math.ceil(budget_chars / LLAMA_CPP_CHARS_PER_TOKEN)
+    required = (
+        prompt_tokens + ROCM_ANALYSIS_MAX_NEW_TOKENS + LLAMA_CPP_CONTEXT_MARGIN_TOKENS
+    )
+    aligned = math.ceil(required / LLAMA_CPP_CONTEXT_ALIGNMENT) * LLAMA_CPP_CONTEXT_ALIGNMENT
+    return max(
+        DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE,
+        min(DEFAULT_ROCM_LLAMA_CPP_MAX_CONTEXT_SIZE, aligned),
+    )
+
+
 def _llama_cpp_context_size() -> int:
-    return _positive_int_env(LLAMA_CPP_CONTEXT_SIZE_ENV) or DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE
+    return _positive_int_env(LLAMA_CPP_CONTEXT_SIZE_ENV) or _required_llama_cpp_context_size()
 
 
 def _llama_cpp_batch_size() -> int:

@@ -60,7 +60,6 @@ class GenerativeModel(Protocol):
 class LlamaCppModel(Protocol):
     def create_completion(self, **kwargs: Any) -> Any: ...
 
-
 # ---------------------------------------------------------------------------
 # Transformers inference
 # ---------------------------------------------------------------------------
@@ -157,12 +156,63 @@ def _generate_report_with_transformers(
 # llama.cpp inference
 # ---------------------------------------------------------------------------
 
+# Tokens kept free between the prompt and the model's context limit as a final
+# safety net against char-to-token estimation error (e.g. token-dense scripts).
+LLAMA_CPP_CONTEXT_GUARD_MARGIN = 64
+
+
+def _fit_prompt_to_context(
+    model: LlamaCppModel,
+    prompt: str,
+    max_new_tokens: int,
+) -> tuple[str, int]:
+    """Trim the prompt so prompt + generation fits the model context window.
+
+    The context window is normally sized to hold the whole transcript, so this
+    only acts as a safety net. It no-ops when the model does not expose the
+    llama.cpp ``n_ctx``/``tokenize``/``detokenize`` helpers (e.g. mock models).
+    """
+    n_ctx_fn = getattr(model, "n_ctx", None)
+    tokenize_fn = getattr(model, "tokenize", None)
+    detokenize_fn = getattr(model, "detokenize", None)
+    if not (callable(n_ctx_fn) and callable(tokenize_fn) and callable(detokenize_fn)):
+        return prompt, max_new_tokens
+
+    try:
+        context_size = int(n_ctx_fn())
+        tokens = list(tokenize_fn(prompt.encode("utf-8")))
+    except Exception:
+        return prompt, max_new_tokens
+
+    allowed_prompt_tokens = context_size - max_new_tokens - LLAMA_CPP_CONTEXT_GUARD_MARGIN
+    if allowed_prompt_tokens < 1:
+        # Generation budget itself is too large; shrink it to leave room.
+        max_new_tokens = max(1, context_size - len(tokens) - LLAMA_CPP_CONTEXT_GUARD_MARGIN)
+        allowed_prompt_tokens = context_size - max_new_tokens - LLAMA_CPP_CONTEXT_GUARD_MARGIN
+
+    if len(tokens) <= allowed_prompt_tokens:
+        return prompt, max_new_tokens
+
+    try:
+        trimmed = detokenize_fn(tokens[:allowed_prompt_tokens]).decode("utf-8", "ignore")
+    except Exception:
+        return prompt, max_new_tokens
+    print(
+        "  ⚠️  Transcript prompt exceeded the llama.cpp context window; "
+        f"trimmed to {allowed_prompt_tokens} tokens."
+    )
+    return trimmed, max_new_tokens
+
+
 def _query_llama_cpp(
     model: LlamaCppModel,
     user_message: str,
     *,
     max_new_tokens: int,
 ) -> str:
+    user_message, max_new_tokens = _fit_prompt_to_context(
+        model, user_message, max_new_tokens
+    )
     response = model.create_completion(
         prompt=user_message,
         max_tokens=max_new_tokens,
