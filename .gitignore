@@ -28,3 +28,6 @@ lib/__pycache__/
 # output directory for generated files
 output/*
 !output/.keep
+
+# test coverage output files
+.coverage
