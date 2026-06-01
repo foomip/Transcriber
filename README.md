@@ -65,7 +65,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 
 Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path — only the text transcript is fetched from YouTube's public subtitle endpoint.
 
-`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses PyTorch device placement for CPU/NVIDIA/Intel and uses a llama.cpp/GGUF backend for AMD ROCm Docker runs. The ROCm llama.cpp path uses Gemma 4 E4B GGUF by default and dynamically splits model layers between AMD VRAM and system RAM using a conservative VRAM budget.
+`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses llama.cpp/GGUF for all backends (CPU, NVIDIA, AMD ROCm, and Intel), providing a unified, resource-efficient inference engine that can dynamically split model layers between GPU VRAM and system RAM.
 
 ---
 
@@ -109,9 +109,9 @@ Installed automatically into the virtual environment during setup (see below).
 | Package                   | Purpose                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------ |
 | `faster-whisper >= 1.0.1` | CTranslate2-based Whisper inference                                            |
-| `transformers >= 5.2.0`   | Loads the local Hugging Face analysis model selected for the active backend    |
-| `torch`                   | PyTorch acceleration for analysis summarisation, including CUDA or ROCm builds |
-| `accelerate`              | Enables `device_map="auto"` for automatic GPU placement                        |
+| `llama-cpp-python`        | GGUF-based analysis model inference for all hardware targets                    |
+| `huggingface-hub`         | Downloads the default GGUF analysis model                                       |
+| `nvidia-ml-py`            | Provides `pynvml` for NVIDIA GPU VRAM probing                                   |
 | `youtube-transcript-api`  | Fetches YouTube captions/subtitles without an API key or headless browser      |
 
 ---
@@ -141,9 +141,19 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For AMD GPUs, install a ROCm-enabled PyTorch build after the base requirements. Use the [PyTorch installation selector](https://pytorch.org/get-started/locally/) to choose the wheel index that matches your ROCm version. ROCm-enabled PyTorch exposes AMD GPUs through the `torch.cuda` API, which the app uses for device detection and VRAM budgeting.
+For a native GPU build of `llama-cpp-python`, you must set `CMAKE_ARGS` during installation to enable CUDA or HIP kernels.
 
-The Docker ROCm path uses llama.cpp with local GGUF model files so AMD systems can split a model across VRAM and system RAM more safely than the PyTorch/Transformers offload path. Native Python ROCm use is still experimental; the documented AMD path is the ROCm Docker image.
+**NVIDIA CUDA:**
+```bash
+CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+**AMD ROCm:**
+```bash
+CMAKE_ARGS="-DGGML_HIP=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+```
+
+If no `CMAKE_ARGS` are provided, `pip` installs the CPU-only version.
 
 ### 3. Make the recording script executable
 
@@ -180,7 +190,7 @@ After copying `.envrc.example` to `.envrc`, no further configuration is needed.
 
 ## Docker Workflow (Optional)
 
-The repository includes a Docker-based path for the transcription and report-generation steps. Audio capture still happens on the host with `record_meeting.sh`, so the privacy boundary stays local while Python dependencies, PyTorch wheels, and model runtime libraries live inside container images.
+The repository includes a Docker-based path for the transcription and report-generation steps. Audio capture still happens on the host with `record_meeting.sh`, so the privacy boundary stays local while Python dependencies, model runtime libraries, and CUDA/ROCm toolkits live inside container images.
 
 ### Docker prerequisites
 
@@ -217,20 +227,17 @@ Then build any variant you want to use:
 ```bash
 docker build -f Dockerfile.cpu -t transcriber:cpu .
 docker build -f Dockerfile.nvidia -t transcriber:nvidia .
-docker build -f Dockerfile.rocm-llama -t transcriber:rocm-llama .
-> **Deprecated:** `Dockerfile.rocm` uses the old PyTorch/Transformers ROCm path, which is unreliable on many consumer AMD cards. Use `transcriber:rocm-llama` instead.
-
 docker build -f Dockerfile.rocm -t transcriber:rocm .
 docker build -f Dockerfile.intel -t transcriber:intel .
 ```
 
-The ROCm llama.cpp image builds `llama-cpp-python` from source with HIP support. For manual AMD builds, you can reduce compile time by targeting your GPU architecture, for example RX 6000-series cards use `gfx1030`:
+The ROCm image builds `llama-cpp-python` from source with HIP support. For manual AMD builds, you can reduce compile time by targeting your GPU architecture, for example RX 6000-series cards use `gfx1030`:
 
 ```bash
-docker build --build-arg AMDGPU_TARGETS=gfx1030 -f Dockerfile.rocm-llama -t transcriber:rocm-llama .
+docker build --build-arg AMDGPU_TARGETS=gfx1030 -f Dockerfile.rocm -t transcriber:rocm .
 ```
 
-When the wrapper auto-builds `transcriber:rocm-llama` on a ROCm host, it reads `rocminfo` and passes the detected `gfx...` targets automatically. Set `AMDGPU_TARGETS` before running the wrapper if you want to override that detection.
+When the wrapper auto-builds `transcriber:rocm` on a ROCm host, it reads `rocminfo` and passes the detected `gfx...` targets automatically. Set `AMDGPU_TARGETS` before running the wrapper if you want to override that detection.
 
 If you want a safe default tag for manual Docker runs, point `latest` at the CPU image:
 
@@ -252,9 +259,9 @@ Then run it against a recorded WAV file:
 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 ```
 
-The wrapper automatically prefers backends in this order: **NVIDIA → ROCm llama.cpp → Intel → CPU**.
+The wrapper automatically prefers backends in this order: **NVIDIA → ROCm → Intel → CPU**.
 
-For ROCm runs, the wrapper selects `transcriber:rocm-llama` by default, passes `/dev/kfd`, `/dev/dri`, the required device owner groups, and `HSA_ENABLE_SDMA=0`, then mounts a GGUF cache at `/cache/transcriber/gguf`. The llama.cpp backend estimates a safe `n_gpu_layers` value from available ROCm VRAM and leaves the rest of the model in system RAM.
+For ROCm runs, the wrapper selects `transcriber:rocm`, passes `/dev/kfd`, `/dev/dri`, the required device owner groups, and `HSA_ENABLE_SDMA=0`, then mounts a GGUF cache at `/cache/transcriber/gguf`. The llama.cpp backend estimates a safe `n_gpu_layers` value from available ROCm VRAM and leaves the rest of the model in system RAM.
 
 If your AMD GPU has limited VRAM, force the CPU Docker image instead. The first two overrides below do that.
 
@@ -266,9 +273,6 @@ FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 ./docker-run-transcribe.sh --force-cpu meeting_20260527_114300.wav
 
 # Force a specific image
-./docker-run-transcribe.sh --image transcriber:rocm-llama meeting_20260527_114300.wav
-
-> **Deprecated:** `transcriber:rocm` uses the old PyTorch/Transformers ROCm path. Use `--image transcriber:rocm-llama` instead.
 ./docker-run-transcribe.sh --image transcriber:rocm meeting_20260527_114300.wav
 
 # Forward normal transcribe.py flags unchanged
@@ -356,6 +360,7 @@ If you know the recording is in a specific language, pass a Whisper language cod
 ```bash
 python transcribe.py -l en meeting_20260527_114300.wav
 python transcribe.py --language=en meeting_20260527_114300.wav
+python transcribe.py --language en meeting_20260527_114300.wav
 ```
 
 The script will:
@@ -363,11 +368,11 @@ The script will:
 1. Detect the available transcription and summarisation backends
 2. Transcribe the audio with Faster-Whisper
 3. Save a transcript with language metadata and timestamped segments
-4. Load the configured analysis model and generate a full meeting report; ROCm Docker runs use Gemma 4 E4B GGUF through llama.cpp by default
+4. Load the configured analysis model and generate a full meeting report
 
 Long-running phases print elapsed-time progress messages so model downloads, model loading, transcription, and summary generation do not look stalled.
 
-> **First run only:** the selected Hugging Face analysis model is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). ROCm llama.cpp runs download the default Gemma 4 E4B GGUF model to `~/.cache/transcriber/gguf`. All subsequent runs load from disk.
+> **First run only:** the selected Hugging Face analysis model is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). ROCm runs download the default Gemma 4 E4B GGUF model to `~/.cache/transcriber/gguf`. All subsequent runs load from disk.
 
 ---
 
@@ -408,7 +413,7 @@ The script will:
 3. Save a timestamped transcript file
 4. Load the configured analysis model locally and generate a Video Summary Report
 
-If the requested language transcript is not available, the script falls back to the first available transcript with a clear warning rather than failing.
+If the requested language transcript is not available, the script falls back to the first available transcript with a clear warning rather than failing. Invalid codes exit before any network requests and print the full supported language-code list sorted alphabetically by language name.
 
 > **First run only:** the analysis model download applies here too — see the note above.
 
@@ -546,6 +551,7 @@ python transcribe.py --language en meeting_20260527_114300.wav
 ```bash
 python youtube-summarize.py -l en https://www.youtube.com/watch?v=XmpKPs9Emx0
 python youtube-summarize.py --language=de https://youtu.be/XmpKPs9Emx0
+python youtube-summarize.py https://youtu.be/XmpKPs9Emx0 -l en
 ```
 
 If the requested language transcript is not available on YouTube, the script falls back to the first available transcript with a warning and continues. Invalid codes exit before any network requests and print the full supported language-code list sorted alphabetically by language name.
@@ -577,35 +583,26 @@ WHISPER_MODEL_SIZE = "small"   # change here
 
 ### Analysis model
 
-The default analysis model is backend-specific: CPU/CUDA/Intel use `google/gemma-4-E4B-it`, while ROCm Docker runs use the Gemma 4 E4B GGUF model through llama.cpp.
+The default analysis model is `google/gemma-4-E4B-it`. For all backends (CPU, NVIDIA, Intel, and AMD ROCm), this model is run through the llama.cpp engine using GGUF quantizations, which allow the model to be split across GPU VRAM and system RAM.
 
-Gemma 4 is the higher-quality default analysis model. For AMD GPUs, **use `transcriber:rocm-llama`** — it runs Gemma 4 E4B GGUF through llama.cpp with explicit GPU-layer offload and a conservative VRAM budget.
+For a native Python installation, a GGUF version of the model is downloaded automatically. For Docker runs, the images come with the necessary build tools, and the wrapper handles the GGUF cache.
 
-The older PyTorch/Transformers ROCm path (`Dockerfile.rocm`, `transcriber:rocm`) is **deprecated**. It relies on CPU↔GPU weight offloading that triggers memory access faults on many consumer AMD cards. If you still need it, the image remains available but will emit a deprecation warning at runtime.
-
-For ROCm llama.cpp runs, the default GGUF file is downloaded on first use into `~/.cache/transcriber/gguf/gemma-4-E4B-it-Q4_K_M.gguf`. To use another local GGUF file, point to it explicitly:
+To compare another local GGUF model without editing source, point to it explicitly:
 
 ```bash
-TRANSCRIBER_LLAMA_CPP_MODEL_PATH=/path/to/model.gguf \
-  ./docker-run-transcribe.sh --image transcriber:rocm-llama meeting_20260527_114300.wav
+TRANSCRIBER_LLAMA_CPP_MODEL_PATH="/path/to/model.gguf" \
+  python transcribe.py meeting_20260527_114300.wav
 ```
 
-The default download source is `ggml-org/gemma-4-E4B-it-GGUF`. To use a different Hugging Face GGUF repo that contains the same filename, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
+The default download source is `ggml-org/gemma-4-E4B-it-GGUF`. To use a different Hugging Face GGUF repository that contains the same filename, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
 
-The automatic ROCm layer split defaults to 42 model layers, matching the Gemma 4 E4B text configuration. Override `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT` only when using a different GGUF architecture.
+The automatic layer split defaults to 42 model layers, matching the Gemma 4 E4B text configuration. Override `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT` only when using a different GGUF architecture.
 
 The llama.cpp context window is sized automatically to hold the whole transcript prompt plus the generated report (derived from `TRANSCRIBER_MAX_TRANSCRIPT_CHARS`, capped at the model's trained 131072-token window). Set `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE` only to pin a fixed window.
 
-Advanced ROCm llama.cpp tuning is available through `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`, `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`, `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`, `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`, `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB`, and `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`. The defaults are intended to be conservative.
+Advanced llama.cpp tuning is available through `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`, `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`, `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`, `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`, `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB`, and `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`. The defaults are intended to be conservative.
 
-To compare another local Hugging Face chat/instruct model without editing source, set `TRANSCRIBER_ANALYSIS_MODEL` for a single run:
-
-```bash
-TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
-   python transcribe.py meeting_20260527_114300.wav
-```
-
-The replacement model must load with `AutoModelForCausalLM.from_pretrained(...)` and provide a tokenizer chat template via `apply_chat_template(...)`.
+To compare another local Hugging Face model, first convert it to GGUF format using the tools provided by the llama.cpp project.
 
 ### Transcript prompt budget
 
@@ -661,22 +658,19 @@ For Faster-Whisper transcription, confirm CTranslate2 can see a CUDA device. AMD
 python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"
 ```
 
-For CPU/NVIDIA/Intel analysis summarisation, confirm PyTorch can see your CUDA, ROCm, or Intel-backed device:
+For analysis summarisation, confirm your hardware is detected by the llama.cpp backend:
 
 ```bash
-python -c "import torch; print('cuda_available=', torch.cuda.is_available()); print('hip=', getattr(torch.version, 'hip', None)); print('device=', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
+python transcribe.py --help
 ```
 
-If `cuda_available` is `False`, your PyTorch installation may not match your CUDA or ROCm driver stack. Refer to the [PyTorch installation selector](https://pytorch.org/get-started/locally/) for the correct install command.
-
-For the Docker workflow, verify that the matching image is being used and that Docker received the correct accelerator flags:
+If you are using Docker, verify that the matching image is being used and that Docker received the correct accelerator flags:
 
 ```bash
 ./docker-run-transcribe.sh --help-docker
 
-docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import torch; print(torch.cuda.is_available())"
+docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import llama_cpp; print('llama_cpp ok')"
 docker run --rm --entrypoint python transcriber:rocm-llama -c "import llama_cpp; print('llama_cpp ok')"
-docker run --rm --entrypoint python transcriber:rocm -c "import torch; print(torch.cuda.is_available(), getattr(torch.version, 'hip', None))"
 ```
 
 **AMD ROCm VRAM limits**
@@ -696,18 +690,6 @@ If ROCm llama.cpp analysis fails with out-of-memory errors, GPU memory access fa
 FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 ```
 
-Do not set `TRANSCRIBER_ANALYSIS_MODEL=google/gemma-4-E4B-it` while forcing `transcriber:rocm`; that uses the older PyTorch/Transformers ROCm path. On AMD systems, Gemma 4 is expected to be used through `transcriber:rocm-llama` as a GGUF model, or through the CPU analysis path.
-
-**Analysis model download fails or is slow**
-
-Hugging Face models download from HuggingFace Hub. If you are behind a proxy or have an unstable connection, you can pre-download one separately and it will be found in the cache automatically on the next run. For the current ROCm Transformers debug image model:
-
-```bash
-python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
-           AutoTokenizer.from_pretrained('Qwen/Qwen2.5-3B-Instruct'); \
-           AutoModelForCausalLM.from_pretrained('Qwen/Qwen2.5-3B-Instruct')"
-```
-
 **`torchvision::nms` error while loading the analysis model**
 
 This app does not use torchvision. If Transformers tries to import a mismatched torchvision build, model loading can fail with `RuntimeError: operator torchvision::nms does not exist`. Remove the stray package from the virtual environment:
@@ -723,7 +705,7 @@ whisper_env/bin/python -m pip uninstall -y torchvision
 **Meeting recording path** — everything runs entirely on your local machine:
 
 - **Faster-Whisper** runs the Whisper model locally via CTranslate2
-- The selected analysis model is downloaded once and runs fully offline thereafter
+- The analysis model is downloaded once and runs fully offline thereafter
 - No audio, transcript, or report data is ever transmitted anywhere
 
 **YouTube summarization path** — two outbound requests are made:
@@ -731,4 +713,4 @@ whisper_env/bin/python -m pip uninstall -y torchvision
 - The video title is fetched from YouTube's public [oEmbed endpoint](https://www.youtube.com/oembed) (a single lightweight JSON request, no authentication)
 - The transcript text is fetched from YouTube's public subtitle endpoint via [`youtube-transcript-api`](https://github.com/jdepoix/youtube-transcript-api)
 
-No audio or video is downloaded. No local transcript or report data is uploaded. All analysis and summarization runs locally on your machine exactly as it does for meeting recordings.
+No audio or video is downloaded. No local transcript or report data is uploaded. All analysis and summarisation runs locally on your machine exactly as it does for meeting recordings.

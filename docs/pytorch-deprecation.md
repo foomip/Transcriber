@@ -267,7 +267,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 9. Phase 5 — Tests
+## 9. Phase 5 — Tests - IMPLEMENTED
 
 `tests/test_analysis.py`:
 
