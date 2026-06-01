@@ -11,14 +11,14 @@ Enable the analysis/summarization step to run via a locally hosted Ollama server
 - The existing local backends (CUDA, ROCm, CPU, llama.cpp) remain unchanged.
 
 ### Suggested Models for Analysis
-For summarization and analysis tasks, we recommend models with a large context window to accommodate full transcripts. Examples:
-- **gemma4:31b-cloud** (Google Gemma 4 Cloud) - official Ollama library model for Gemma 4 Cloud, 131k token context window.
-- **gemma4:e4b** (Google Gemma 4 Expert 4B) - smaller, edge-optimized variant (~4.5B parameters) with 128K token context window, uses fewer resources.
-- **gemma4** (Google Gemma 4) - 131k token context window, excellent for long documents.
-- **llama3.1:8b-instruct** or **llama3.1:70b-instruct** (Meta Llama 3.1) - 128k token context window.
-- **mistral-nemo:12b-instruct** (Mistral Nemo) - 128k token context window.
+For high-fidelity summarization and analysis tasks, we recommend the larger models available via Ollama Cloud. These provide superior reasoning and synthesis capabilities while maintaining the necessary context window to accommodate full transcripts.
 
-These models are available on Ollama Cloud (where applicable) and can be pulled via `ollama pull <model>` (e.g., `ollama pull gemma4:31b-cloud` for the cloud variant, `ollama pull gemma4:e4b` for the smaller E4B variant).
+Examples:
+- **gemma4:31b-cloud** (Google Gemma 4 Cloud) - official Ollama library model for Gemma 4 Cloud, 131k token context window.
+- **llama3.1:70b-instruct** (Meta Llama 3.1) - 128k token context window.
+- **mistral-large** (Mistral AI) - High-end reasoning and large context window.
+
+These models are available on Ollama Cloud and can be pulled via `ollama pull <model>` (e.g., `ollama pull gemma4:31b-cloud`).
 
 
 ## Implementation Details
@@ -103,22 +103,15 @@ else:
 - Ensure `requests` is not required; but if preferred, we could add `requests` to `requirements.txt` optional.
 
 ### 5. Configuration & Documentation
-- Update `README.md` or a new section in docs explaining how to set up Ollama locally.
+- Update `README.md` or a new section in docs explaining how to set up Ollama locally for high-end model inference.
 - Example:
   ```bash
   # Install Ollama (see https://ollama.com)
-  ollama pull gemma4:31b-cloud   # pull the Gemma 4 Cloud model from Ollama Cloud (first time only)
+  ollama pull gemma4:31b-cloud   # pull the high-end Gemma 4 Cloud model (first time only)
   ollama serve &       # start the Ollama server on localhost:11434 in background
   # Then run transcriber with Ollama backend:
   TRANSCRIBER_ANALYSIS_BACKEND=ollama \
   TRANSCRIBER_OLLAMA_MODEL=gemma4:31b-cloud \
-  python transcribe.py meeting.wav
-  ```
-  **Note:** For lower resource usage, you can instead use the smaller `gemma4:e4b` model:
-  ```bash
-  ollama pull gemma4:e4b
-  TRANSCRIBER_ANALYSIS_BACKEND=ollama \
-  TRANSCRIBER_OLLAMA_MODEL=gemma4:e4b \
   python transcribe.py meeting.wav
   ```
 
