@@ -225,7 +225,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 7. Phase 3 — Dockerfiles
+## 7. Phase 3 — Dockerfiles - IMPLEMENTED
 
 - `Dockerfile.base`: add `cmake`, `ninja-build`, `pkg-config`; build a CPU
   `llama-cpp-python`. (Already installs OS deps and the non-torch requirements.)
