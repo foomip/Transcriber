@@ -69,6 +69,23 @@ Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/repor
 
 ---
 
+## Why a Local Pipeline? (vs. Cloud Services)
+
+Most transcription and summarization tools rely on cloud APIs (like OpenAI, Google, or AssemblyAI). This app is designed as a **local-first alternative**.
+
+| Feature | Local-First (This App) | Cloud-Based Solutions |
+| :--- | :--- | :--- |
+| **Privacy** | **Maximum**. Audio and transcripts never leave your machine. | **Limited**. Data is transmitted and stored on third-party servers. |
+| **Cost** | **Free**. No subscriptions or per-token/per-minute fees. | **Recurring**. Monthly costs or "pay-as-you-go" API charges. |
+| **Connectivity** | **Offline**. Works without internet once models are downloaded. | **Online**. Requires a stable connection to function. |
+| **Control** | **Total**. You choose the specific Whisper and LLM models. | **Fixed**. You are limited to the models provided by the vendor. |
+| **Hardware** | **Demanding**. Requires a decent CPU/GPU for speed. | **Zero**. Compute is handled by the cloud provider. |
+| **Setup** | **Manual**. Requires local installation and config. | **Instant**. Sign up and start using via a web interface. |
+
+**In short:** Use this app if you prioritize **privacy, data sovereignty, and cost-efficiency** over the convenience of a managed cloud service.
+
+---
+
 ## Requirements
 
 ### System packages
