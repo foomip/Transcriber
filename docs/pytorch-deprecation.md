@@ -99,7 +99,7 @@ These decisions were confirmed before planning and govern the implementation:
 
 ---
 
-## 5. Phase 1 — Python Analysis Core (`lib/analysis/`)
+## 5. Phase 1 — Python Analysis Core (`lib/analysis/`) - IMPLEMENTED
 
 ### 5.1 `backend.py`
 
