@@ -211,7 +211,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 6. Phase 2 — Dependencies
+## 6. Phase 2 — Dependencies - IMPLEMENTED
 
 `requirements.txt`:
 
