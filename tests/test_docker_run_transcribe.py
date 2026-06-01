@@ -20,7 +20,7 @@ record_call() {
     for arg in "$@"; do
         printf '|%s' "$arg" >> "$log_path"
     done
-    printf '\n' >> "$log_path"
+    printf '\\n' >> "$log_path"
 }
 
 image_known() {
@@ -67,7 +67,7 @@ case "$command_name" in
             shift
         done
         if [ -n "$image_tag" ]; then
-            printf '%s\n' "$image_tag" >> "$built_path"
+            printf '%s\\n' "$image_tag" >> "$built_path"
         fi
         exit 0
         ;;
@@ -246,7 +246,7 @@ def test_wrapper_manual_rocm_image_uses_rocm_device_groups_without_rebuilding(tm
     assert str((dri_dir / "renderD128").stat().st_gid) in run_call
 
 
-def test_wrapper_auto_selects_rocm_llama_image_for_rocm_hosts(tmp_path):
+def test_wrapper_auto_selects_rocm_image_for_rocm_hosts(tmp_path):
     env, log_path = _make_env(tmp_path)
     _write_executable(tmp_path / "bin" / "rocminfo", SIMPLE_SUCCESS_COMMAND)
 
@@ -281,9 +281,9 @@ def test_wrapper_auto_selects_rocm_llama_image_for_rocm_hosts(tmp_path):
     build_calls = _find_all_calls(calls, "build")
     run_call = _find_first_call(calls, "run")
 
-    assert any(call[:5] == ["build", "-f", str(SCRIPT_PATH.parent / "Dockerfile.rocm-llama"), "-t", "transcriber:rocm-llama"] for call in build_calls)
-    assert "transcriber:rocm-llama" in run_call
-    assert "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp" in run_call
+    assert any(call[:5] == ["build", "-f", str(SCRIPT_PATH.parent / "Dockerfile.rocm"), "-t", "transcriber:rocm"] for call in build_calls)
+    assert "transcriber:rocm" in run_call
+    # Removed explicit check for TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp as it's now the only engine
     assert "TRANSCRIBER_GGUF_CACHE_DIR=/cache/transcriber/gguf" in run_call
     assert f"{(tmp_path / 'gguf-cache')}:/cache/transcriber/gguf" in run_call
     assert "HSA_ENABLE_SDMA=0" in run_call
@@ -291,7 +291,7 @@ def test_wrapper_auto_selects_rocm_llama_image_for_rocm_hosts(tmp_path):
     assert str(dri_dir) in run_call
 
 
-def test_wrapper_passes_detected_rocm_targets_to_rocm_llama_build(tmp_path):
+def test_wrapper_passes_detected_rocm_targets_to_rocm_build(tmp_path):
     env, log_path = _make_env(tmp_path)
     _write_executable(tmp_path / "bin" / "rocminfo", ROCMINFO_WITH_TARGETS_COMMAND)
 
@@ -322,7 +322,7 @@ def test_wrapper_passes_detected_rocm_targets_to_rocm_llama_build(tmp_path):
     assert result.returncode == 0, result.stderr + result.stdout
 
     build_call = next(
-        call for call in _find_all_calls(_read_calls(log_path), "build") if "transcriber:rocm-llama" in call
+        call for call in _find_all_calls(_read_calls(log_path), "build") if "transcriber:rocm" in call
     )
 
     assert "--build-arg" in build_call
@@ -334,10 +334,7 @@ def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
 
     env.update(
         {
-            "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB": "6",
-            "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB": "9",
             "TRANSCRIBER_ANALYSIS_BACKEND": "llama_cpp",
-            "TRANSCRIBER_ANALYSIS_MODEL": "test/model",
             "TRANSCRIBER_LLAMA_CPP_MODEL_PATH": "/models/test.gguf",
             "TRANSCRIBER_LLAMA_CPP_MODEL_REPO": "test/repo-GGUF",
             "TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE": "8192",
@@ -364,10 +361,7 @@ def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
 
     run_call = _find_first_call(_read_calls(log_path), "run")
 
-    assert "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB=6" in run_call
-    assert "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB=9" in run_call
     assert "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp" in run_call
-    assert "TRANSCRIBER_ANALYSIS_MODEL=test/model" in run_call
     assert "TRANSCRIBER_LLAMA_CPP_MODEL_PATH=/models/test.gguf" in run_call
     assert "TRANSCRIBER_LLAMA_CPP_MODEL_REPO=test/repo-GGUF" in run_call
     assert "TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE=8192" in run_call
