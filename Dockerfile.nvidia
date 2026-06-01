@@ -1,6 +1,8 @@
 # ---------- Dockerfile.nvidia ----------
-# NVIDIA CUDA variant — CUDA 12.4 devel + CUDA-enabled llama.cpp.
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# NVIDIA CUDA variant — CUDA 12.4 cuDNN devel + CUDA-enabled llama.cpp.
+# Faster-Whisper/CTranslate2 speech models need cuDNN at runtime on NVIDIA,
+# so use the cuDNN-enabled devel image instead of plain CUDA devel.
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

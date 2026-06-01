@@ -82,9 +82,23 @@ def detect_device() -> tuple[str, str]:
             if isinstance(gpu_name, bytes):
                 gpu_name = gpu_name.decode("utf-8")
             print(f"  ✅ GPU detected: {gpu_name}")
-        except Exception:
+        except Exception as exc:
+            if os.environ.get("DEBUG") == "1":
+                print(f"  DEBUG: NVIDIA name lookup failed: {exc}")
             print(f"  ✅ {cuda_count} CUDA GPU(s) detected")
         return "cuda", "float16"
+
+    if os.environ.get("DEBUG") == "1" and os.path.exists("/dev/nvidia0"):
+        try:
+            nvidia_devices = sorted(
+                entry for entry in os.listdir("/dev") if entry.startswith("nvidia")
+            )
+            print(
+                "  DEBUG: CUDA runtime reported 0 visible devices, but NVIDIA device nodes exist: "
+                + ", ".join(f"/dev/{entry}" for entry in nvidia_devices)
+            )
+        except OSError as exc:
+            print(f"  DEBUG: Could not inspect /dev for NVIDIA device nodes: {exc}")
 
     # AMD / ROCm check
     if os.path.exists("/dev/kfd"):
@@ -96,7 +110,9 @@ def detect_device() -> tuple[str, str]:
                 print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
             else:
                 print("  ℹ️  ROCm GPU detected for summarization")
-        except Exception:
+        except Exception as exc:
+            if os.environ.get("DEBUG") == "1":
+                print(f"  DEBUG: ROCm name lookup failed: {exc}")
             print("  ℹ️  ROCm GPU detected for summarization")
         print("  ℹ️  Faster-Whisper does not expose ROCm here — transcribing on CPU")
         return "cpu", "int8"

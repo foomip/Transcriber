@@ -160,8 +160,14 @@ def _detect_gpu() -> tuple[str, str]:
         if isinstance(name, bytes):
             name = name.decode("utf-8")
         return "cuda", name
-    except (ImportError, Exception):
-        pass
+    except (ImportError, Exception) as exc:
+        # Log failure for easier debugging in Docker
+        if os.environ.get("DEBUG") == "1":
+            print(f"  DEBUG: NVIDIA detection failed: {exc}")
+        
+        # Fallback: check for device node
+        if os.path.exists("/dev/nvidia0"):
+            return "cuda", "NVIDIA GPU (detected via /dev/nvidia0)"
 
     # AMD check
     if os.path.exists("/dev/kfd"):
@@ -175,7 +181,9 @@ def _detect_gpu() -> tuple[str, str]:
             if len(lines) > 1:
                 name = lines[1].split(None, 1)[-1].strip()
                 return "rocm", name
-        except (subprocess.CalledProcessError, FileNotFoundError, IndexError):
+        except (subprocess.CalledProcessError, FileNotFoundError, IndexError) as exc:
+            if os.environ.get("DEBUG") == "1":
+                print(f"  DEBUG: ROCm SMI failed: {exc}")
             pass
         return "rocm", "AMD GPU"
 

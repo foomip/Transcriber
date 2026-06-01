@@ -10,6 +10,7 @@ GGUF_CACHE_DIR="${TRANSCRIBER_GGUF_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tr
 DEV_KFD_PATH="${TRANSCRIBER_DEV_KFD_PATH:-/dev/kfd}"
 DRI_DIR="${TRANSCRIBER_DRI_DIR:-/dev/dri}"
 DRM_VENDOR_GLOB="${TRANSCRIBER_DRM_VENDOR_GLOB:-/sys/class/drm/*/device/vendor}"
+NVIDIA_DEVICE_GLOB="${TRANSCRIBER_NVIDIA_DEVICE_GLOB:-/dev/nvidia*}"
 
 BASE_IMAGE="transcriber:base"
 
@@ -416,6 +417,7 @@ run_flags=(
 )
 runtime_group_ids=()
 
+pass_env_if_set DEBUG
 pass_env_if_set TRANSCRIBER_ANALYSIS_BACKEND
 pass_env_if_set TRANSCRIBER_LLAMA_CPP_MODEL_PATH
 pass_env_if_set TRANSCRIBER_LLAMA_CPP_MODEL_REPO
@@ -429,6 +431,11 @@ pass_env_if_set TRANSCRIBER_MAX_TRANSCRIPT_CHARS
 case "$selected_backend" in
     nvidia)
         run_flags+=(--gpus all)
+        run_flags+=(-e "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}")
+        for nvidia_device in $NVIDIA_DEVICE_GLOB; do
+            [ -e "$nvidia_device" ] || continue
+            add_device_group "$nvidia_device"
+        done
         ;;
     rocm)
         run_flags+=( -e "HSA_ENABLE_SDMA=${HSA_ENABLE_SDMA:-0}" )
