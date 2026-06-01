@@ -8,12 +8,12 @@ Responsibilities:
 """
 
 import os
+import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
 import ctranslate2
-import torch
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment, TranscriptionInfo
 
@@ -65,9 +65,8 @@ def detect_device() -> tuple[str, str]:
     """
     Return (device, compute_type) for Faster-Whisper / CTranslate2.
 
-    Uses CTranslate2's own CUDA probe so PyTorch is only needed for
-    reporting the GPU name — not for the detection itself. Falls back
-    to CPU int8 when no GPU is found.
+    Uses CTranslate2's own CUDA probe so PyTorch is not needed for
+    detection. Falls back to CPU int8 when no GPU is found.
     """
     get_cuda_device_count = cast(
         Callable[[], int], getattr(ctranslate2, "get_cuda_device_count")
@@ -76,16 +75,27 @@ def detect_device() -> tuple[str, str]:
 
     if cuda_count > 0:
         try:
-            gpu_name = torch.cuda.get_device_name(0)
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            gpu_name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(gpu_name, bytes):
+                gpu_name = gpu_name.decode("utf-8")
             print(f"  ✅ GPU detected: {gpu_name}")
         except Exception:
             print(f"  ✅ {cuda_count} CUDA GPU(s) detected")
         return "cuda", "float16"
 
-    if getattr(torch.version, "hip", None) and torch.cuda.is_available():
+    # AMD / ROCm check
+    if os.path.exists("/dev/kfd"):
         try:
-            gpu_name = torch.cuda.get_device_name(0)
-            print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
+            res = subprocess.check_output(["rocm-smi", "--showproductname"], stderr=subprocess.DEVNULL, text=True)
+            lines = res.strip().splitlines()
+            if len(lines) > 1:
+                gpu_name = lines[1].split(None, 1)[-1].strip()
+                print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
+            else:
+                print("  ℹ️  ROCm GPU detected for summarization")
         except Exception:
             print("  ℹ️  ROCm GPU detected for summarization")
         print("  ℹ️  Faster-Whisper does not expose ROCm here — transcribing on CPU")

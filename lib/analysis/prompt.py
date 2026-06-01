@@ -108,6 +108,4 @@ def _build_prompt_for_backend(
     transcript_body: str,
     meta: dict[str, str],
 ) -> str:
-    if backend.use_plain_prompt:
-        return _build_compact_user_message(transcript_body, meta)
-    return _build_user_message(transcript_body, meta)
+    return _build_compact_user_message(transcript_body, meta)

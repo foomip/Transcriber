@@ -1,3 +1,5 @@
+import os
+import subprocess
 from types import SimpleNamespace
 
 from lib import transcription
@@ -33,24 +35,40 @@ def test_language_helpers_normalize_lookup_and_format_languages():
 
 def test_detect_device_uses_cuda_when_ctranslate2_sees_a_cuda_gpu(monkeypatch):
     monkeypatch.setattr(transcription.ctranslate2, "get_cuda_device_count", lambda: 1)
-    monkeypatch.setattr(transcription.torch.cuda, "get_device_name", lambda _index: "Test GPU")
+    
+    # Mock pynvml for the GPU name print
+    import types
+    mock_pynvml = types.SimpleNamespace(
+        nvmlInit=lambda: None,
+        nvmlDeviceGetHandleByIndex=lambda _: 0,
+        nvmlDeviceGetName=lambda _: "Test GPU",
+    )
+    monkeypatch.setitem(sys.modules, "pynvml", mock_pynvml) if "sys" in globals() else None
+    # Since we are in a test, we might need to import sys
+    import sys
+    monkeypatch.setitem(sys.modules, "pynvml", mock_pynvml)
 
     assert transcription.detect_device() == ("cuda", "float16")
 
 
 def test_detect_device_uses_cpu_for_rocm_faster_whisper_fallback(monkeypatch):
     monkeypatch.setattr(transcription.ctranslate2, "get_cuda_device_count", lambda: 0)
-    monkeypatch.setattr(transcription.torch.version, "hip", "6.0", raising=False)
-    monkeypatch.setattr(transcription.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(transcription.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
+    monkeypatch.setattr(os.path, "exists", lambda path: path == "/dev/kfd")
+    
+    # Mock rocm-smi
+    import subprocess
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showproductname"]:
+            return "GPU  Product Name\n0    ROCm GPU"
+        raise FileNotFoundError()
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
 
     assert transcription.detect_device() == ("cpu", "int8")
 
 
 def test_detect_device_uses_cpu_when_no_gpu_is_available(monkeypatch):
     monkeypatch.setattr(transcription.ctranslate2, "get_cuda_device_count", lambda: 0)
-    monkeypatch.setattr(transcription.torch.version, "hip", None, raising=False)
-    monkeypatch.setattr(transcription.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(os.path, "exists", lambda path: False)
 
     assert transcription.detect_device() == ("cpu", "int8")
 
