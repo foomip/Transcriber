@@ -1,17 +1,6 @@
 # ---------- Dockerfile.intel ----------
-# Intel GPU variant — Level Zero runtime + Intel Extension for PyTorch.
+# Intel GPU variant — now uses the CPU-only llama.cpp build (same as CPU image).
 FROM transcriber:base
 
-# Switch back to root to install system packages
-USER root
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        intel-level-zero-gpu \
-        level-zero \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python -m pip install --no-cache-dir torch intel-extension-for-pytorch
-
-USER appuser
 # Entrypoint inherited from base
 # --------------------------------------

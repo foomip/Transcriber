@@ -1,21 +1,22 @@
 # ---------- Dockerfile.rocm ----------
-# ⚠️ DEPRECATED: This image uses the old PyTorch/Transformers ROCm path.
-# It has been superseded by Dockerfile.rocm-llama (llama.cpp/GGUF backend).
-# The PyTorch/Transformers CPU↔GPU offload path is unreliable on many
-# consumer AMD cards and can trigger memory access faults during inference.
-# Use `transcriber:rocm-llama` instead for AMD GPU analysis.
-#
-# Kept only for backward compatibility; will be removed in a future release.
+# AMD ROCm llama.cpp variant — uses GGUF models with dynamic GPU-layer offload.
 FROM rocm/pytorch:latest
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HSA_ENABLE_SDMA=0
+    HSA_ENABLE_SDMA=0 \
+    TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp \
+    TRANSCRIBER_GGUF_CACHE_DIR=/cache/transcriber/gguf
+
+ARG AMDGPU_TARGETS="gfx900;gfx906;gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1102"
 
 # System packages (base image may already have some; we add for safety)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
+        cmake \
+        ninja-build \
+        pkg-config \
         libsndfile1 \
         ffmpeg \
         git \
@@ -43,11 +44,14 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN sed '/^torch$/d' requirements.txt > requirements_no_torch.txt && \
-    python -m pip install --no-cache-dir -r requirements_no_torch.txt && \
-    rm requirements_no_torch.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt && \
+    CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
+    FORCE_CMAKE=1 \
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
 
 COPY . .
+RUN mkdir -p /cache/transcriber/gguf && \
+    chown -R appuser:appgroup /cache/transcriber
 USER appuser
 ENTRYPOINT ["python", "transcribe.py"]
 # --------------------------------------

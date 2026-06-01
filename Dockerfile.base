@@ -1,15 +1,17 @@
 # ---------- Dockerfile.base ----------
 # Common base image: OS packages, non-root user, source tree, pure-Python deps
-# (torch is installed separately per variant to match the accelerator)
 FROM python:3.14-slim
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# System packages needed by all wheels
+# System packages needed by all wheels, including llama.cpp build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
+        cmake \
+        ninja-build \
+        pkg-config \
         libsndfile1 \
         ffmpeg \
         git \
@@ -36,11 +38,10 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
 
 WORKDIR /app
 
-# Install Python dependencies minus torch (torch is variant-specific)
+# Install Python dependencies and build the CPU version of llama-cpp-python
 COPY requirements.txt .
-RUN sed '/^torch$/d' requirements.txt > requirements_no_torch.txt && \
-    python -m pip install --no-cache-dir -r requirements_no_torch.txt && \
-    rm requirements_no_torch.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt && \
+    python -m pip install --no-cache-dir llama-cpp-python
 
 COPY . .
 

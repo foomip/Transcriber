@@ -1,6 +1,6 @@
 # ---------- Dockerfile.nvidia ----------
-# NVIDIA CUDA variant — CUDA 12.4 runtime + CUDA-enabled PyTorch.
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+# NVIDIA CUDA variant — CUDA 12.4 devel + CUDA-enabled llama.cpp.
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.14 \
         python3.14-venv \
         build-essential \
+        cmake \
+        ninja-build \
+        pkg-config \
         libsndfile1 \
         ffmpeg \
         git \
@@ -45,10 +48,10 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN sed '/^torch$/d' requirements.txt > requirements_no_torch.txt && \
-    python -m pip install --no-cache-dir -r requirements_no_torch.txt && \
-    rm requirements_no_torch.txt && \
-    python -m pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+RUN python -m pip install --no-cache-dir -r requirements.txt && \
+    CMAKE_ARGS="-DGGML_CUDA=on" \
+    FORCE_CMAKE=1 \
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
 
 COPY . .
 USER appuser
