@@ -244,7 +244,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 8. Phase 4 — `docker-run-transcribe.sh`
+## 8. Phase 4 — `docker-run-transcribe.sh` - IMPLEMENTED
 
 - Collapse the `rocm` and `rocm-llama` backends into a single `rocm` backend
   across:

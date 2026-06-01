@@ -28,7 +28,6 @@ Examples:
   ./docker-run-transcribe.sh meeting.wav
   ./docker-run-transcribe.sh --force-cpu meeting.wav
   ./docker-run-transcribe.sh --image transcriber:rocm meeting.wav -l en
-    ./docker-run-transcribe.sh --image transcriber:rocm-llama meeting.wav -l en
   FORCE_CPU=1 ./docker-run-transcribe.sh meeting.wav
 
 Notes:
@@ -141,9 +140,6 @@ backend_for_known_image() {
         transcriber:rocm)
             echo "rocm"
             ;;
-        transcriber:rocm-llama)
-            echo "rocm-llama"
-            ;;
         transcriber:intel)
             echo "intel"
             ;;
@@ -161,14 +157,7 @@ backend_for_image_hint() {
             echo "nvidia"
             ;;
         *rocm*|*amd*)
-            case "$image" in
-                *llama*|*gguf*)
-                    echo "rocm-llama"
-                    ;;
-                *)
-                    echo "rocm"
-                    ;;
-            esac
+            echo "rocm"
             ;;
         *intel*|*xpu*)
             echo "intel"
@@ -193,9 +182,6 @@ image_for_backend() {
         rocm)
             echo "transcriber:rocm"
             ;;
-        rocm-llama)
-            echo "transcriber:rocm-llama"
-            ;;
         intel)
             echo "transcriber:intel"
             ;;
@@ -218,9 +204,6 @@ dockerfile_for_backend() {
             ;;
         rocm)
             echo "$REPO_ROOT/Dockerfile.rocm"
-            ;;
-        rocm-llama)
-            echo "$REPO_ROOT/Dockerfile.rocm-llama"
             ;;
         intel)
             echo "$REPO_ROOT/Dockerfile.intel"
@@ -264,7 +247,7 @@ build_image() {
     fi
 
     echo "🐳  Building $image from $(basename "$dockerfile")"
-    if [ "$backend" = "rocm-llama" ] && rocm_targets="$(detect_rocm_amdgpu_targets)"; then
+    if [ "$backend" = "rocm" ] && rocm_targets="$(detect_rocm_amdgpu_targets)"; then
         echo "   AMDGPU_TARGETS: $rocm_targets"
         build_args+=(--build-arg "AMDGPU_TARGETS=$rocm_targets")
     fi
@@ -289,7 +272,7 @@ ensure_image() {
         return
     fi
 
-    die "Docker image '$image' was not found and cannot be auto-built. Build it manually or use one of: transcriber:cpu, transcriber:nvidia, transcriber:rocm-llama, transcriber:rocm, transcriber:intel."
+    die "Docker image '$image' was not found and cannot be auto-built. Build it manually or use one of: transcriber:cpu, transcriber:nvidia, transcriber:rocm, transcriber:intel."
 }
 
 select_backend() {
@@ -301,7 +284,7 @@ select_backend() {
     if has_nvidia; then
         echo "nvidia"
     elif has_rocm; then
-        echo "rocm-llama"
+        echo "rocm"
     elif has_intel; then
         echo "intel"
     else
@@ -433,10 +416,7 @@ run_flags=(
 )
 runtime_group_ids=()
 
-pass_env_if_set TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB
-pass_env_if_set TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB
 pass_env_if_set TRANSCRIBER_ANALYSIS_BACKEND
-pass_env_if_set TRANSCRIBER_ANALYSIS_MODEL
 pass_env_if_set TRANSCRIBER_LLAMA_CPP_MODEL_PATH
 pass_env_if_set TRANSCRIBER_LLAMA_CPP_MODEL_REPO
 pass_env_if_set TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE
@@ -450,11 +430,8 @@ case "$selected_backend" in
     nvidia)
         run_flags+=(--gpus all)
         ;;
-    rocm|rocm-llama)
-        if [ "$selected_backend" = "rocm-llama" ] && [ ! "${TRANSCRIBER_ANALYSIS_BACKEND+x}" ]; then
-            run_flags+=(-e "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp")
-        fi
-        run_flags+=(-e "HSA_ENABLE_SDMA=${HSA_ENABLE_SDMA:-0}")
+    rocm)
+        run_flags+=( -e "HSA_ENABLE_SDMA=${HSA_ENABLE_SDMA:-0}" )
         run_flags+=(--device "$DEV_KFD_PATH")
         add_device_group "$DEV_KFD_PATH"
         if [ -e "$DRI_DIR" ]; then
@@ -477,12 +454,6 @@ case "$selected_backend" in
 esac
 
 ensure_image "$selected_image"
-
-if [ "$selected_backend" = "rocm" ]; then
-    echo "⚠️  DEPRECATED: transcriber:rocm uses the old PyTorch/Transformers ROCm path."
-    echo "   This image is deprecated and will be removed in a future release."
-    echo "   Use --image transcriber:rocm-llama instead for AMD GPU analysis."
-fi
 
 echo "▶ Running transcribe.py in Docker"
 echo "   Image   : $selected_image"
