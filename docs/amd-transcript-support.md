@@ -71,40 +71,27 @@ The install flow should:
 
 ---
 
-## 2. Update transcription device detection
+## 2. Unify and update device detection
 
 ### Current behavior
 
-`lib/transcription.py:detect_device()` currently does:
-
-- use GPU if `ctranslate2.get_cuda_device_count() > 0`
-- otherwise, if ROCm is detected, log that transcription must run on CPU
+`lib/transcription.py:detect_device()` currently implements its own limited detection logic and explicitly falls back to CPU when ROCm is detected. Meanwhile, `lib/analysis/backend.py` already has a robust `_detect_gpu()` helper.
 
 ### Required behavior
 
-Change detection so AMD ROCm can use the CTranslate2 GPU path.
+Avoid duplicating detection logic. Instead, unify hardware detection across the project.
 
 ### Design intent
 
-Separate:
-
-- **accelerator kind**: `nvidia`, `rocm`, `cpu`
-- **CTranslate2 runtime device string**: `cuda` or `cpu`
-- **compute type**: `float16`, `int8_float16`, `float32`, etc.
+1. **Centralize**: Move `_detect_gpu()` from `lib/analysis/backend.py` to `lib/hardware.py` as a public shared utility.
+2. **Map to CTranslate2**:
+   - If `lib.hardware.detect_gpu()` returns `kind="cuda"` or `kind="rocm"`, use CTranslate2 `device="cuda"`.
+   - If it returns `kind="cpu"`, use CTranslate2 `device="cpu"`.
+3. **Decouple**: Keep the distinction between the *physical accelerator* (`nvidia`, `rocm`, `cpu`) and the *runtime device string* required by the library (`cuda`, `cpu`).
 
 ### Practical result
 
-If:
-
-- CTranslate2 reports a visible GPU, and
-- the machine is ROCm-based,
-
-then transcription should run with:
-
-- `device="cuda"`
-- an appropriate GPU compute type
-
-instead of falling back to CPU.
+By using the shared `detect_gpu()`, transcription will automatically support ROCm GPUs using the same reliable detection path as the summarization stage.
 
 ---
 
@@ -256,7 +243,9 @@ On a working ROCm setup, this should report at least one visible GPU and one or 
 
 Most likely implementation touch points:
 
-- `lib/transcription.py`
+- `lib/hardware.py` (to host shared `detect_gpu`)
+- `lib/analysis/backend.py` (to use shared `detect_gpu`)
+- `lib/transcription.py` (to use shared `detect_gpu`)
 - `tests/test_transcription.py`
 - `Dockerfile.rocm`
 - `README.md`
