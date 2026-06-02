@@ -392,7 +392,7 @@ The script will:
 
 Long-running phases print elapsed-time progress messages so model downloads, model loading, transcription, and summary generation do not look stalled.
 
-> **First run only:** the selected Hugging Face analysis model is downloaded to the HuggingFace model cache (`~/.cache/huggingface`). ROCm runs download the default Gemma 4 E4B GGUF model to `~/.cache/transcriber/gguf`. All subsequent runs load from disk.
+> **First run only:** the default GGUF analysis model is downloaded (via Hugging Face Hub) into the Transcriber GGUF cache (`~/.cache/transcriber/gguf` by default). All subsequent runs load from disk.
 
 ---
 
