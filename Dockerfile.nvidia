@@ -65,7 +65,7 @@ RUN grep -v '^llama-cpp-python$' requirements.txt > requirements_no_llama.txt &&
     FORCE_CMAKE=1 \
     python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python && \
     rm -f /usr/local/lib/libcuda.so.1 && \
-    ldconfig \
+    ldconfig && \
     rm requirements_no_llama.txt && \
     ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 && \
     ldconfig && \
