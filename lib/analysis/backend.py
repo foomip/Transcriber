@@ -329,20 +329,27 @@ def _ensure_llama_cpp_model(model_path: str) -> str:
 # llama.cpp parameter helpers
 # ---------------------------------------------------------------------------
 
-def _required_llama_cpp_context_size() -> int:
+def _required_llama_cpp_context_size(transcript_chars: int | None = None) -> int:
     """Size the context window to hold the transcript prompt plus generation.
 
-    The transcript fed to analysis is bounded by ``transcript_char_budget()``,
-    so the context window is derived from the same budget to guarantee the
-    prompt fits. The result is clamped to the model's trained context window.
+    When the transcript length is known, size the window from the actual prompt
+    payload instead of the maximum transcript budget. This avoids reserving a
+    massive KV cache for short recordings, which can otherwise prevent any GPU
+    layer offload on cards with moderate VRAM.
+
+    When ``transcript_chars`` is omitted, fall back to ``transcript_char_budget()``
+    so existing callers and tests retain the previous conservative behaviour.
+    The result is clamped to the model's trained context window.
     """
     from lib.report import transcript_char_budget
 
-    budget_chars = transcript_char_budget()
-    prompt_tokens = math.ceil(budget_chars / LLAMA_CPP_CHARS_PER_TOKEN)
-    required = (
-        prompt_tokens + 2048 + LLAMA_CPP_CONTEXT_MARGIN_TOKENS
-    )
+    if transcript_chars is None:
+        transcript_chars = transcript_char_budget()
+    else:
+        transcript_chars = max(0, transcript_chars)
+
+    prompt_tokens = math.ceil(transcript_chars / LLAMA_CPP_CHARS_PER_TOKEN)
+    required = prompt_tokens + 2048 + LLAMA_CPP_CONTEXT_MARGIN_TOKENS
     aligned = math.ceil(required / LLAMA_CPP_CONTEXT_ALIGNMENT) * LLAMA_CPP_CONTEXT_ALIGNMENT
     return max(
         DEFAULT_LLAMA_CPP_CONTEXT_SIZE,
@@ -350,8 +357,10 @@ def _required_llama_cpp_context_size() -> int:
     )
 
 
-def _llama_cpp_context_size() -> int:
-    return _positive_int_env(LLAMA_CPP_CONTEXT_SIZE_ENV) or _required_llama_cpp_context_size()
+def _llama_cpp_context_size(transcript_chars: int | None = None) -> int:
+    return _positive_int_env(LLAMA_CPP_CONTEXT_SIZE_ENV) or _required_llama_cpp_context_size(
+        transcript_chars
+    )
 
 
 def _llama_cpp_batch_size() -> int:
@@ -362,7 +371,10 @@ def _llama_cpp_layer_count() -> int:
     return _positive_int_env(LLAMA_CPP_LAYER_COUNT_ENV) or DEFAULT_LLAMA_CPP_LAYER_COUNT
 
 
-def _llama_cpp_gpu_layers(model_path: str) -> tuple[int, tuple[str, ...]]:
+def _llama_cpp_gpu_layers(
+    model_path: str,
+    transcript_chars: int | None = None,
+) -> tuple[int, tuple[str, ...]]:
     configured_gpu_layers = _positive_int_env(LLAMA_CPP_GPU_LAYERS_ENV)
     if configured_gpu_layers is not None:
         return configured_gpu_layers, (
@@ -388,7 +400,7 @@ def _llama_cpp_gpu_layers(model_path: str) -> tuple[int, tuple[str, ...]]:
         return 0, (f"GGUF model file not found at {model_path}",)
 
     layer_count = _llama_cpp_layer_count()
-    context_size = _llama_cpp_context_size()
+    context_size = _llama_cpp_context_size(transcript_chars)
     headroom_gib = (
         _positive_float_env(LLAMA_CPP_GPU_HEADROOM_ENV)
         or DEFAULT_LLAMA_CPP_GPU_HEADROOM_GIB
@@ -411,11 +423,14 @@ def _llama_cpp_gpu_layers(model_path: str) -> tuple[int, tuple[str, ...]]:
     return gpu_layers, (note,)
 
 
-def _llama_cpp_model_kwargs(model_path: str) -> tuple[dict[str, Any], tuple[str, ...]]:
-    gpu_layers, notes = _llama_cpp_gpu_layers(model_path)
+def _llama_cpp_model_kwargs(
+    model_path: str,
+    transcript_chars: int | None = None,
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    gpu_layers, notes = _llama_cpp_gpu_layers(model_path, transcript_chars)
     model_kwargs: dict[str, Any] = {
         "model_path": model_path,
-        "n_ctx": _llama_cpp_context_size(),
+        "n_ctx": _llama_cpp_context_size(transcript_chars),
         "n_batch": _llama_cpp_batch_size(),
         "n_gpu_layers": gpu_layers,
         "verbose": False,
@@ -427,11 +442,15 @@ def _llama_cpp_model_kwargs(model_path: str) -> tuple[dict[str, Any], tuple[str,
 # Per-backend configuration builders
 # ---------------------------------------------------------------------------
 
-def _llama_cpp_analysis_backend(kind: str, device_name: str) -> AnalysisBackend:
+def _llama_cpp_analysis_backend(
+    kind: str,
+    device_name: str,
+    transcript_chars: int | None = None,
+) -> AnalysisBackend:
     model_path = _llama_cpp_model_path()
     if _llama_cpp_is_available():
         model_path = _ensure_llama_cpp_model(model_path)
-    model_kwargs, model_notes = _llama_cpp_model_kwargs(model_path)
+    model_kwargs, model_notes = _llama_cpp_model_kwargs(model_path, transcript_chars)
     return AnalysisBackend(
         name=kind,
         device_name=device_name,
@@ -449,20 +468,20 @@ def _llama_cpp_analysis_backend(kind: str, device_name: str) -> AnalysisBackend:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def detect_analysis_backend() -> AnalysisBackend:
+def detect_analysis_backend(transcript_chars: int | None = None) -> AnalysisBackend:
     """Return the best analysis backend for summarization."""
     backend_preference = _analysis_backend_preference()
     kind, device_name = _detect_gpu()
 
     if kind == "cpu":
         # In a llama.cpp-only world, CPU is just llama.cpp with 0 layers on GPU.
-        return _llama_cpp_analysis_backend(kind, device_name)
+        return _llama_cpp_analysis_backend(kind, device_name, transcript_chars)
 
     if backend_preference == LLAMA_CPP_BACKEND_NAME or backend_preference == "auto":
-        return _llama_cpp_analysis_backend(kind, device_name)
+        return _llama_cpp_analysis_backend(kind, device_name, transcript_chars)
 
     # Since we are removing Transformers, any other preference just falls back to llama.cpp
-    return _llama_cpp_analysis_backend(kind, device_name)
+    return _llama_cpp_analysis_backend(kind, device_name, transcript_chars)
 
 
 def _display_model_name(backend: AnalysisBackend) -> str:

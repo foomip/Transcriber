@@ -162,6 +162,24 @@ def test_detect_analysis_backend_returns_llama_cpp_on_cpu(monkeypatch):
     assert backend.max_new_tokens == 2048
 
 
+def test_detect_analysis_backend_sizes_context_from_actual_transcript(tmp_path, monkeypatch):
+    model_path = tmp_path / analysis.DEFAULT_LLAMA_CPP_MODEL_FILENAME
+    model_path.write_bytes(b"0" * 2 * analysis._GIB)
+
+    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "250000")
+    monkeypatch.delenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, raising=False)
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_path", lambda: str(model_path))
+    monkeypatch.setattr(analysis_backend, "_ensure_llama_cpp_model", lambda path: path)
+    monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 12 * analysis._GIB)
+
+    backend = analysis.detect_analysis_backend(transcript_chars=12_000)
+
+    assert backend.model_kwargs["n_ctx"] < 10_000
+    assert backend.model_kwargs["n_gpu_layers"] > 0
+
+
 def test_llama_cpp_gpu_layers_respects_explicit_override(tmp_path, monkeypatch):
     model_path = tmp_path / "model.gguf"
     model_path.write_bytes(b"0" * analysis._GIB)
@@ -279,6 +297,13 @@ def test_required_llama_cpp_context_size_scales_with_transcript_budget(monkeypat
     assert small >= expected_min
 
 
+def test_required_llama_cpp_context_size_uses_actual_transcript_when_known():
+    context_size = analysis._required_llama_cpp_context_size(transcript_chars=12_000)
+
+    assert context_size < 10_000
+    assert context_size >= 12_000 / analysis.LLAMA_CPP_CHARS_PER_TOKEN + 2048
+
+
 def test_required_llama_cpp_context_size_respects_env_override(monkeypatch):
     monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "8192")
     monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "250000")
@@ -300,6 +325,32 @@ class FakeTokenizingLlamaCppModel(FakeLlamaCppModel):
 
     def detokenize(self, tokens):
         return bytes(tokens)
+
+
+def test_generate_summaries_passes_transcript_length_to_backend(monkeypatch):
+    seen = {}
+
+    def fake_detect_analysis_backend(transcript_chars=None):
+        seen["transcript_chars"] = transcript_chars
+        return analysis.AnalysisBackend(
+            name="cpu",
+            device_name="CPU",
+            model_id="fake.gguf",
+            model_kwargs={"model_path": "fake.gguf", "n_ctx": 4096, "n_gpu_layers": 0},
+        )
+
+    monkeypatch.setattr(analysis, "detect_analysis_backend", fake_detect_analysis_backend)
+    monkeypatch.setattr(
+        analysis,
+        "_generate_report_with_llama_cpp",
+        lambda backend, transcript_body, meta: "## Executive Summary\nOK\n\n## Detailed Summary\nOK\n\n## Action Items\nNone explicitly stated.\n\n## Key Decisions\nNone explicitly stated.\n\n## Topics Discussed\nTesting.",
+    )
+    monkeypatch.setattr(analysis, "_validate_grounding", lambda generated_report, transcript_body: None)
+
+    sections = analysis.generate_summaries("short transcript", BASE_META)
+
+    assert seen["transcript_chars"] == len("short transcript")
+    assert sections[0][0] == "## Executive Summary"
 
 
 def test_fit_prompt_to_context_trims_oversized_prompt():

@@ -85,7 +85,7 @@ def generate_summaries(
     Returns a list of (markdown_heading, generated_text) pairs in the
     same order as SUMMARY_TASKS, ready to be handed to report.compile().
     """
-    backend = detect_analysis_backend()
+    backend = detect_analysis_backend(transcript_chars=len(transcript_body))
     print(f"\n🤖 Loading {_display_model_name(backend)}...")
     print("   (Missing default GGUF files download to the local GGUF cache.)\n")
 
