@@ -64,17 +64,17 @@ PySide6>=6.7
 A single window with a `QTabWidget` containing three tabs. Tabs are the natural fit because the three stages are sequential but independent — a user may open the app just to run analysis on an existing transcript without ever using the recording tab.
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  🎙️ Transcriber                            [─][□][×]  │
-├──────────────────────────────────────────────────────── │
+┌─────────────────────────────────────────────────────────┐
+│  🎙️ Transcriber                            [─][□][×]    │
+├─────────────────────────────────────────────────────────┤
 │  [ 🔴 Recording ]  [ 📝 Transcription ]  [ 📋 Analysis ]│
-├────────────────────────────────────────────────────────┤
-│                                                        │
-│                  (active tab content)                  │
-│                                                        │
-├────────────────────────────────────────────────────────┤
-│  Status bar: Ready                                     │
-└────────────────────────────────────────────────────────┘
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│                  (active tab content)                   │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│  Status bar: Ready                                      │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Recording tab
@@ -112,7 +112,7 @@ A single window with a `QTabWidget` containing three tabs. Tabs are the natural 
 │  │ [00:00:04.50 -> 00:00:12.30]  Hey everyone...    │  │
 │  │ [00:00:12.80 -> 00:00:21.10]  We need to make... │  │
 │  │ [00:00:21.50 -> 00:00:29.00]  Agreed, let's...   │  │
-│  │                              ← lines appear live  │  │
+│  │                              ← lines appear live │  │
 │  └──────────────────────────────────────────────────┘  │
 │                                                        │
 │  Save as: [ meeting_20260527_transcript.txt ] [💾 Save]│
@@ -127,12 +127,12 @@ A single window with a `QTabWidget` containing three tabs. Tabs are the natural 
 │  Transcript: [ meeting_transcript.txt       ] [Browse] │
 │                                                        │
 │              ╔══════════════════════╗                  │
-│              ║  ⚙️  Generate Report  ║                  │
+│              ║  ⚙️  Generate Report  ║                 │
 │              ╚══════════════════════╝                  │
 │                                                        │
 │  Sections:                                             │
-│  ✅ Executive Summary    ✅ Detailed Summary            │
-│  ⏳ Action Items         ○  Key Decisions               │
+│  ✅ Executive Summary    ✅ Detailed Summary           │
+│  ⏳ Action Items         ○  Key Decisions              │
 │  ○  Topics Discussed                                   │
 │                                                        │
 │  ┌──────────────────────────────────────────────────┐  │
