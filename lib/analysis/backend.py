@@ -192,7 +192,7 @@ def _detect_gpu() -> tuple[str, str]:
 
 def _nvidia_free_vram_bytes() -> int | None:
     try:
-        import pynvml
+        import pynvml  # type: ignore
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
