@@ -44,7 +44,9 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt && \
+RUN grep -v '^llama-cpp-python\b' requirements.txt > requirements_no_llama.txt && \
+    python -m pip install --no-cache-dir -r requirements_no_llama.txt && \
+    rm requirements_no_llama.txt && \
     CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
     FORCE_CMAKE=1 \
     python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
