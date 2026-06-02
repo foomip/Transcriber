@@ -49,10 +49,6 @@ RUN grep -v '^llama-cpp-python$' requirements.txt > requirements_no_llama.txt &&
     rm requirements_no_llama.txt && \
     CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
     FORCE_CMAKE=1 \
-    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python \
-    rm requirements_no_llama.txt && \
-    CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
-    FORCE_CMAKE=1 \
     python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
 
 COPY . .
