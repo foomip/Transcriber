@@ -9,6 +9,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 - [Requirements](#requirements)
   - [System packages](#system-packages)
   - [Python packages](#python-packages)
+  - [Hardware recommendations](#hardware-recommendations)
 - [Installation](#installation)
 - [Docker Workflow (Optional)](#docker-workflow-optional)
   - [Docker prerequisites](#docker-prerequisites)
