@@ -8,8 +8,7 @@ Responsibilities:
 """
 
 import os
-import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -17,7 +16,7 @@ import ctranslate2
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment, TranscriptionInfo
 
-from lib.hardware import parse_rocm_product_name
+from lib.hardware import detect_gpu
 from lib.progress import ProgressTimer
 from lib.languages import SUPPORTED_LANGUAGES
 
@@ -62,76 +61,64 @@ def format_supported_languages() -> str:
     )
 
 
+# Preferred CTranslate2 compute-type order, most efficient first.
+# CTranslate2 uses this same string notation for both CUDA and ROCm devices.
+_GPU_COMPUTE_TYPE_PREFERENCE = ["float16", "int8_float16", "float32", "int8"]
+_CPU_COMPUTE_TYPE = "int8"
+
+
+def _best_gpu_compute_type() -> str:
+    """Ask CTranslate2 which compute types the current GPU supports and return
+    the best one according to ``_GPU_COMPUTE_TYPE_PREFERENCE``.
+
+    Falls back to ``float16`` when the query is unavailable (older builds).
+    """
+    get_supported = getattr(ctranslate2, "get_supported_compute_types", None)
+    if not callable(get_supported):
+        return "float16"
+    try:
+        supported: set[str] = set(get_supported("cuda"))
+    except Exception:  # noqa: BLE001
+        return "float16"
+    for candidate in _GPU_COMPUTE_TYPE_PREFERENCE:
+        if candidate in supported:
+            return candidate
+    return "float16"
+
+
 def detect_device() -> tuple[str, str]:
     """
-    Return (device, compute_type) for Faster-Whisper / CTranslate2.
+    Return ``(device, compute_type)`` for Faster-Whisper / CTranslate2.
 
-    Uses CTranslate2's own CUDA probe so PyTorch is not needed for
-    detection. Falls back to CPU int8 when no GPU is found.
+    Detection uses the shared ``lib.hardware.detect_gpu()`` helper so the
+    same logic covers both NVIDIA and AMD ROCm.  CTranslate2 uses the
+    device string ``"cuda"`` for both GPU families; callers need not
+    distinguish between them at the CTranslate2 API level.
+
+    The compute type for GPU paths is chosen dynamically by querying
+    CTranslate2 for what the current device actually supports, using the
+    preference order: float16 → int8_float16 → float32 → int8.
     """
-    get_cuda_device_count = cast(
-        Callable[[], int], getattr(ctranslate2, "get_cuda_device_count")
-    )
-    cuda_count = get_cuda_device_count()
+    kind, device_name = detect_gpu()
 
-    if cuda_count > 0:
-        try:
-            import pynvml
+    if kind == "cuda":
+        compute_type = _best_gpu_compute_type()
+        print(f"  ✅ CUDA GPU detected for transcription: {device_name}")
+        return "cuda", compute_type
 
-            pynvml.nvmlInit()
-            try:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                gpu_name = pynvml.nvmlDeviceGetName(handle)
-            finally:
-                try:
-                    pynvml.nvmlShutdown()
-                except Exception:
-                    pass
-            if isinstance(gpu_name, bytes):
-                gpu_name = gpu_name.decode("utf-8")
-            print(f"  ✅ GPU detected: {gpu_name}")
-        except Exception as exc:
-            if os.environ.get("DEBUG") == "1":
-                print(f"  DEBUG: NVIDIA name lookup failed: {exc}")
-            print(f"  ✅ {cuda_count} CUDA GPU(s) detected")
-        return "cuda", "float16"
-
-    if os.environ.get("DEBUG") == "1" and os.path.exists("/dev/nvidia0"):
-        try:
-            nvidia_devices = sorted(
-                entry for entry in os.listdir("/dev") if entry.startswith("nvidia")
-            )
+    if kind == "rocm":
+        # CTranslate2 uses device="cuda" for ROCm builds too.
+        compute_type = _best_gpu_compute_type()
+        print(f"  ✅ ROCm GPU detected for transcription: {device_name}")
+        if os.environ.get("DEBUG") == "1":
             print(
-                "  DEBUG: CUDA runtime reported 0 visible devices, but NVIDIA device nodes exist: "
-                + ", ".join(f"/dev/{entry}" for entry in nvidia_devices)
+                "  DEBUG: Using CTranslate2 device='cuda' for ROCm "
+                "(ROCm builds still use CUDA device string)"
             )
-        except OSError as exc:
-            print(f"  DEBUG: Could not inspect /dev for NVIDIA device nodes: {exc}")
-
-    # AMD / ROCm check
-    if os.path.exists("/dev/kfd"):
-        try:
-            res = subprocess.check_output(
-                ["rocm-smi", "--showproductname"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            gpu_name = parse_rocm_product_name(res)
-            if gpu_name:
-                print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
-            else:
-                if os.environ.get("DEBUG") == "1":
-                    print("  DEBUG: Could not parse a ROCm GPU name from rocm-smi output")
-                print("  ℹ️  ROCm GPU detected for summarization")
-        except Exception as exc:
-            if os.environ.get("DEBUG") == "1":
-                print(f"  DEBUG: ROCm name lookup failed: {exc}")
-            print("  ℹ️  ROCm GPU detected for summarization")
-        print("  ℹ️  Faster-Whisper does not expose ROCm here — transcribing on CPU")
-        return "cpu", "int8"
+        return "cuda", compute_type
 
     print("  ℹ️  No GPU detected — running on CPU")
-    return "cpu", "int8"
+    return "cpu", _CPU_COMPUTE_TYPE
 
 
 def fmt_ts(seconds: float) -> str:

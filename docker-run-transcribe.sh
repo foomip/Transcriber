@@ -439,6 +439,11 @@ case "$selected_backend" in
         ;;
     rocm)
         run_flags+=( -e "HSA_ENABLE_SDMA=${HSA_ENABLE_SDMA:-0}" )
+        # Pass CT2_CUDA_ALLOCATOR through when set by the caller.  Some RDNA2
+        # cards need CT2_CUDA_ALLOCATOR=cub_caching to avoid illegal memory
+        # access errors with CTranslate2 on ROCm.  Not auto-applied because it
+        # is not universally required; document in README troubleshooting.
+        pass_env_if_set CT2_CUDA_ALLOCATOR
         run_flags+=(--device "$DEV_KFD_PATH")
         add_device_group "$DEV_KFD_PATH"
         if [ -e "$DRI_DIR" ]; then

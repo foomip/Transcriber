@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .utils import AnalysisModelError
-from lib.hardware import parse_rocm_product_name
+from lib.hardware import detect_gpu as _shared_detect_gpu, parse_rocm_product_name
 from lib.progress import ProgressTimer
 
 # ---------------------------------------------------------------------------
@@ -155,50 +155,13 @@ def _available_ram_bytes() -> int | None:
 
 
 def _detect_gpu() -> tuple[str, str]:
-    """Return (kind, device_name). kind is 'cuda', 'rocm', or 'cpu'."""
-    # NVIDIA check
-    try:
-        import pynvml # type: ignore
-        try:
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            name = pynvml.nvmlDeviceGetName(handle)
-            if isinstance(name, bytes):
-                name = name.decode("utf-8")
-            return "cuda", name
-        finally:
-            # Ensure NVML resources are released
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
-    except (ImportError, Exception) as exc:
-        # Log failure for easier debugging in Docker
-        if os.environ.get("DEBUG") == "1":
-            print(f"  DEBUG: NVIDIA detection failed: {exc}")
-        
-        # Fallback: check for device node
-        if os.path.exists("/dev/nvidia0"):
-            return "cuda", "NVIDIA GPU (detected via /dev/nvidia0)"
+    """Return (kind, device_name). kind is 'cuda', 'rocm', or 'cpu'.
 
-    # AMD check
-    if os.path.exists("/dev/kfd"):
-        try:
-            res = subprocess.check_output(
-                ["rocm-smi", "--showproductname"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            if name := parse_rocm_product_name(res):
-                return "rocm", name
-            if os.environ.get("DEBUG") == "1":
-                print("  DEBUG: Could not parse a ROCm GPU name from rocm-smi output")
-        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            if os.environ.get("DEBUG") == "1":
-                print(f"  DEBUG: ROCm SMI failed: {exc}")
-        return "rocm", "AMD GPU"
-
-    return "cpu", "CPU"
+    Delegates to ``lib.hardware.detect_gpu`` so detection logic is not
+    duplicated.  This thin wrapper is kept for backwards compatibility with
+    internal callers inside this module.
+    """
+    return _shared_detect_gpu()
 
 
 def _nvidia_free_vram_bytes() -> int | None:

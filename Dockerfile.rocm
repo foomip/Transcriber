@@ -9,7 +9,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp \
     TRANSCRIBER_GGUF_CACHE_DIR=/cache/transcriber/gguf
 
-ARG AMDGPU_TARGETS="gfx900;gfx906;gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1102"
+ARG AMDGPU_TARGETS="gfx1030"
 
 # System packages (base image may already have some; we add for safety)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         ninja-build \
         pkg-config \
+        libopenblas-dev \
         libsndfile1 \
         ffmpeg \
         git \
@@ -42,16 +43,66 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
         usermod -g "$GROUP_ID" appuser; \
     fi
 
-WORKDIR /app
-COPY requirements.txt .
-RUN grep -v '^llama-cpp-python$' requirements.txt > requirements_no_llama.txt && \
-    python -m pip install --no-cache-dir -r requirements_no_llama.txt && \
-    rm requirements_no_llama.txt && \
-    CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
+WORKDIR /tmp/build
+
+# ---- install all Python deps first (gets faster-whisper, pytest, etc.) ----
+# ctranslate2 is pulled as a transitive dep of faster-whisper; we overwrite
+# it below with the HIP source build.  llama-cpp-python gets the default
+# CPU wheel and is overwritten afterwards with the HIP source build.
+COPY requirements.txt /tmp/build/
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+# ---- build CTranslate2 from source with -DWITH_HIP=ON ----
+# CTranslate2 does not ship ROCm/HIP wheels on PyPI or any wheel index.
+# We build the C++ library first, then compile the Python wrapper that
+# links against it — the same two-stage pattern upstream documents:
+#   https://github.com/OpenNMT/CTranslate2/blob/master/docs/installation.md
+ARG CTRL2_VERSION=v4.7.1
+RUN git clone --branch "${CTRL2_VERSION}" --depth 1 --recurse-submodules \
+        https://github.com/OpenNMT/CTranslate2.git \
+        /tmp/build/ctranslate2 && \
+    cd /tmp/build/ctranslate2 && \
+    cmake -S . -B build \
+        -DCMAKE_INSTALL_PREFIX=/opt/ctranslate2 \
+        -DCMAKE_C_COMPILER=amdclang \
+        -DCMAKE_CXX_COMPILER=amdclang++ \
+        -DWITH_HIP=ON \
+        -DWITH_MKL=OFF \
+        -DWITH_DNNL=OFF \
+        -DWITH_CUDNN=OFF \
+        -DWITH_OPENBLAS=ON \
+        -DOPENMP_RUNTIME=COMP \
+        -DCMAKE_HIP_ARCHITECTURES="${AMDGPU_TARGETS}" \
+        -DGPU_TARGETS="${AMDGPU_TARGETS}" \
+        -DCMAKE_CXX_FLAGS="-O3 -Wno-deprecated-literal-operator" \
+        -DCMAKE_HIP_FLAGS="-O3 -Wno-deprecated-literal-operator" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_CLI=OFF \
+        -DBUILD_TESTS=OFF && \
+    cmake --build build --parallel "$(nproc)" && \
+    cmake --install build && \
+    ldconfig
+
+ENV CTRANSLATE2_ROOT=/opt/ctranslate2 \
+    LD_LIBRARY_PATH=/opt/ctranslate2/lib:/opt/rocm/lib/llvm/lib:${LD_LIBRARY_PATH:-}
+
+# ---- build Python wrapper so ctranslate2 points to the HIP library ----
+RUN cd /tmp/build/ctranslate2/python && \
+    pip install -r install_requirements.txt && \
+    python setup.py bdist_wheel && \
+    pip install --no-cache-dir --force-reinstall dist/*.whl
+
+# ---- build llama-cpp-python from source with HIP support ----
+RUN CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=${AMDGPU_TARGETS}" \
     FORCE_CMAKE=1 \
     python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
 
-COPY . .
+# ---- clean up build tree to keep the image small ----
+RUN rm -rf /tmp/build
+
+# ---- copy application code ----
+WORKDIR /app
+COPY . /app/
 RUN mkdir -p /cache/transcriber/gguf && \
     chown -R appuser:appgroup /cache/transcriber
 USER appuser

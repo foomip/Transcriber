@@ -1,7 +1,7 @@
 # 🎙️ transcriber
 
 A fully **local**, **private** meeting recorder, transcription, and summarization pipeline for Linux.
-Record any online meeting **or** point it at a YouTube video — transcribe with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) or fetch YouTube's built-in captions, then generate a structured Markdown report using a local Hugging Face analysis model. No cloud services. No API keys. Nothing leaves your machine.
+Record any online meeting **or** point it at a YouTube video - transcribe with [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) or fetch YouTube's built-in captions, then generate a structured Markdown report using a local Hugging Face analysis model. No cloud services. No API keys. Nothing leaves your machine.
 
 ## Table of Contents
 
@@ -16,8 +16,8 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
   - [Building the images](#building-the-images)
   - [Running the Docker wrapper](#running-the-docker-wrapper)
   - [Testing in Docker](#testing-in-docker)
-- [Quick Start — Meeting Recording](#quick-start--meeting-recording)
-- [Quick Start — YouTube Summarization](#quick-start--youtube-summarization)
+- [Quick Start - Meeting Recording](#quick-start--meeting-recording)
+- [Quick Start - YouTube Summarization](#quick-start--youtube-summarization)
 - [Output Files](#output-files)
   - [Transcript format](#transcript-format)
   - [Report format](#report-format)
@@ -25,7 +25,7 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
   - [Whisper model size](#whisper-model-size)
   - [Analysis model](#analysis-model)
   - [Transcript prompt budget](#transcript-prompt-budget)
-- [Platform Notes — Pop!\_OS 24.04 with COSMIC Desktop](#platform-notes--pop_os-2404-with-cosmic-desktop)
+- [Platform Notes - Pop!\_OS 24.04 with COSMIC Desktop](#platform-notes--pop_os-2404-with-cosmic-desktop)
   - [Dummy Output bug (kernel 6.16.x)](#dummy-output-bug-kernel-616x)
 - [Troubleshooting](#troubleshooting)
 - [Privacy](#privacy)
@@ -64,9 +64,9 @@ Record any online meeting **or** point it at a YouTube video — transcribe with
 └─────────────────────┘
 ```
 
-Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path — only the text transcript is fetched from YouTube's public subtitle endpoint.
+Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path - only the text transcript is fetched from YouTube's public subtitle endpoint.
 
-`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA when CTranslate2 can see it and falls back cleanly to CPU otherwise. Analysis summarisation uses llama.cpp/GGUF for all backends (CPU, NVIDIA, AMD ROCm, and Intel), providing a unified, resource-efficient inference engine that can dynamically split model layers between GPU VRAM and system RAM.
+`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA or AMD ROCm when CTranslate2 can see a GPU, and falls back cleanly to CPU otherwise. Both GPU families use CTranslate2 `device="cuda"` internally — the distinction is handled automatically. Analysis summarisation uses llama.cpp/GGUF for all backends (CPU, NVIDIA, AMD ROCm, and Intel), providing a unified, resource-efficient inference engine that can dynamically split model layers between GPU VRAM and system RAM.
 
 ---
 
@@ -101,7 +101,7 @@ sudo apt update && sudo apt install ffmpeg pulseaudio-utils python3-venv -y
 | `pulseaudio-utils` | Provides `pactl` for PipeWire/PulseAudio device detection |
 | `python3-venv`     | Creates the isolated Python environment                   |
 
-> **PipeWire / PulseAudio** — any modern Linux distribution running PipeWire with the `pipewire-pulse` compatibility layer works out of the box. Ubuntu 22.04+, Fedora, Arch, and Pop!\_OS 22.04+ all qualify.
+> **PipeWire / PulseAudio** - any modern Linux distribution running PipeWire with the `pipewire-pulse` compatibility layer works out of the box. Ubuntu 22.04+, Fedora, Arch, and Pop!\_OS 22.04+ all qualify.
 
 ### Python packages
 
@@ -117,21 +117,24 @@ Installed automatically into the virtual environment during setup (see below).
 
 ### Hardware Recommendations
 
-The pipeline has two main stages: transcription (Faster-Whisper) and summarization (llama.cpp with Gemma‑4).
+The pipeline has two main stages: transcription (Faster-Whisper) and summarization (llama.cpp with Gemma-4).
 Below are GPU recommendations for each stage.
 
-**Transcription (NVIDIA CUDA only)**
-- Minimum: Any NVIDIA GPU with **2 GB VRAM** (e.g. GTX 1650, RTX 3050) – will run the Whisper small model in FP16.
-- Recommended: **4 GB VRAM or more** (e.g. RTX 3060, RTX 4060) for comfortable headroom and faster throughput.
-- AMD GPUs: Transcription falls back to CPU; a modern CPU with 8 GB+ RAM is sufficient.
+**Transcription (NVIDIA CUDA and AMD ROCm)**
+- Minimum: Any NVIDIA or AMD GPU with **2 GB VRAM** – will run the Whisper small model in FP16.
+- Recommended: **4 GB VRAM or more** (e.g. RTX 3060, RX 7600) for comfortable headroom and faster throughput.
+- AMD ROCm: Requires a ROCm-enabled CTranslate2 build (see [AMD ROCm setup](#amd-rocm-transcription-setup) below). 
+  - **Supported GPUs**: Generally RDNA 2 (RX 6000 series) and RDNA 3 (RX 7000 series) or newer.
+  - **Unsupported GPUs**: Older architectures (e.g. RX 500 series / Vega) are not supported by the current ROCm toolchain and will fall back to CPU transcription.
+- CPU fallback: used automatically when no GPU is detected or supported.
 
 **Summarization (llama.cpp, works with CUDA and ROCm)**
-- Minimum: **8 GB VRAM** (NVIDIA or AMD) – loads the Gemma‑4 E4B Q4_K_M model with limited GPU offloading.
-- Recommended: **12 GB VRAM or more** (e.g. RTX 3060‑12GB, RTX 4070‑12GB, RX 7900 XT) for smoother layer offloading and better throughput, especially with longer meetings.
-- VRAM scales with context length; for very long transcripts (>1 h) consider 16 GB+.
+- Minimum: **8 GB VRAM** (NVIDIA or AMD) - loads the Gemma-4 E4B Q4_K_M model with limited GPU offloading.
+- Recommended: **12 GB VRAM or more** (e.g. RTX 3060-12GB, RTX 4070-12GB, RX 7900 XT) for smoother layer offloading and better throughput, especially with longer meetings.
+- VRAM scales with context length; for very long transcripts (>1 h) consider 16 GB+.
 
 **Overall system**
-- RAM: 8 GB+ system memory is adequate; 16 GB+ recommended for multitasking.
+- RAM: 8 GB+ system memory is adequate; 16 GB+ recommended for multitasking.
 - Storage: A few GB for models and temporary files; SSD preferred for faster model loading.
 
 ---
@@ -140,8 +143,8 @@ Below are GPU recommendations for each stage.
 
 Choose one of two workflows:
 
-- **Native Python workflow** — create `whisper_env` locally and run the scripts directly.
-- **Docker workflow** — keep recording on the host, but run transcription and analysis inside a container. This avoids host-side Python package management for the heavy-lifting steps.
+- **Native Python workflow** - create `whisper_env` locally and run the scripts directly.
+- **Docker workflow** - keep recording on the host, but run transcription and analysis inside a container. This avoids host-side Python package management for the heavy-lifting steps.
 
 The native Python workflow remains the default for local development and for `record_meeting.sh`.
 
@@ -175,6 +178,24 @@ CMAKE_ARGS="-DGGML_HIP=on" pip install llama-cpp-python --force-reinstall --no-c
 
 If no `CMAKE_ARGS` are provided, `pip` installs the CPU-only version.
 
+#### AMD ROCm transcription setup
+
+By default the `ctranslate2` wheel from PyPI does not include ROCm/HIP support. To enable AMD GPU transcription, run the provided helper after the standard install:
+
+```bash
+bash scripts/install_ctranslate2_rocm.sh
+```
+
+This force-reinstalls `ctranslate2` from the ROCm wheel index and falls back gracefully to the standard PyPI wheel when no ROCm-specific wheel is available. It also runs a quick smoke test to confirm GPU visibility:
+
+```bash
+python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count(), ctranslate2.get_supported_compute_types('cuda'))"
+```
+
+On a working ROCm setup this prints a device count ≥ 1 and a list of supported compute types such as `['float16', 'int8_float16', 'int8']`.
+
+> **Note:** CTranslate2 ROCm builds still use `device="cuda"` in the Python API. This is expected — Faster-Whisper and the transcription pipeline handle this transparently.
+
 ### 3. Make the recording script executable
 
 ```bash
@@ -197,7 +218,7 @@ If you have [direnv](https://direnv.net/) installed and hooked into your shell, 
 # Install direnv (if not already installed)
 sudo apt install direnv
 
-# Add the shell hook — add this line to your ~/.bashrc or ~/.zshrc
+# Add the shell hook - add this line to your ~/.bashrc or ~/.zshrc
 eval "$(direnv hook bash)"   # or zsh / fish
 
 # Allow the .envrc already present in the repo
@@ -336,11 +357,11 @@ docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import tor
 
 ---
 
-## Quick Start — Meeting Recording
+## Quick Start - Meeting Recording
 
 You will need **two terminal windows** open side by side.
 
-### Step 1 — Start recording before your meeting begins
+### Step 1 - Start recording before your meeting begins
 
 ```bash
 ./record_meeting.sh
@@ -366,7 +387,7 @@ You can also provide a custom output filename:
 
 When the meeting ends, press `Ctrl+C`. The WAV file is finalised immediately.
 
-### Step 2 — Transcribe and analyse
+### Step 2 - Transcribe and analyse
 
 Activate the virtual environment if it is not already active, then pass the recording to `transcribe.py`:
 
@@ -396,9 +417,9 @@ Long-running phases print elapsed-time progress messages so model downloads, mod
 
 ---
 
-## Quick Start — YouTube Summarization
+## Quick Start - YouTube Summarization
 
-Pass any YouTube URL to `youtube-summarize.py`. No recording or audio download is needed — the script fetches YouTube's existing captions.
+Pass any YouTube URL to `youtube-summarize.py`. No recording or audio download is needed - the script fetches YouTube's existing captions.
 
 ```bash
 source whisper_env/bin/activate   # skip if using direnv
@@ -435,7 +456,7 @@ The script will:
 
 If the requested language transcript is not available, the script falls back to the first available transcript with a clear warning rather than failing. Invalid codes exit before any network requests and print the full supported language-code list sorted alphabetically by language name.
 
-> **First run only:** the analysis model download applies here too — see the note above.
+> **First run only:** the analysis model download applies here too - see the note above.
 
 ---
 
@@ -461,7 +482,7 @@ For a video with ID `XmpKPs9Emx0`:
 | `output/XmpKPs9Emx0_transcript.txt`   | YouTube metadata header plus one timestamped line per caption   |
 | `output/XmpKPs9Emx0_report.md`        | Video Summary Report generated by the local analysis model      |
 
-### Transcript format — meeting recording
+### Transcript format - meeting recording
 
 ```
 # Transcription metadata
@@ -475,10 +496,10 @@ Detection confidence: 97%
 
 [00:00:04.50 -> 00:00:12.30]  Hey everyone, let's look at the database schema update.
 [00:00:12.80 -> 00:00:21.10]  We need to make sure the user_id column is indexed before deploying to staging.
-[01:02:03.45 -> 01:02:08.90]  Agreed — let's get that merged by end of week.
+[01:02:03.45 -> 01:02:08.90]  Agreed - let's get that merged by end of week.
 ```
 
-### Transcript format — YouTube
+### Transcript format - YouTube
 
 ```
 # Transcription metadata
@@ -517,7 +538,7 @@ Both pipelines produce the same five-section Markdown report. The analysis step 
 ```markdown
 # Video Summary Report
 
-**Source:** `Example Video Title — youtube.com/watch?v=XmpKPs9Emx0`
+**Source:** `Example Video Title - youtube.com/watch?v=XmpKPs9Emx0`
 **Date:** Unknown
 **Duration:** 12 minutes
 **Requested language:** English (en)
@@ -558,7 +579,7 @@ Both report types then continue with the same five sections:
 
 Both scripts share the same `-l` / `--language` flag and the same set of supported language codes.
 
-**`transcribe.py`** — forces Faster-Whisper to transcribe in the given language:
+**`transcribe.py`** - forces Faster-Whisper to transcribe in the given language:
 
 ```bash
 python transcribe.py -l en meeting_20260527_114300.wav
@@ -566,7 +587,7 @@ python transcribe.py --language=en meeting_20260527_114300.wav
 python transcribe.py --language en meeting_20260527_114300.wav
 ```
 
-**`youtube-summarize.py`** — prefers the matching YouTube transcript language and guides the summary output language:
+**`youtube-summarize.py`** - prefers the matching YouTube transcript language and guides the summary output language:
 
 ```bash
 python youtube-summarize.py -l en https://www.youtube.com/watch?v=XmpKPs9Emx0
@@ -592,7 +613,7 @@ The default model is `small`, which gives better accuracy than `base` while rema
 | ---------- | ------- | -------------- | -------------------------- |
 | `tiny`     | ~75 MB  | Fastest        | Suitable for quick drafts  |
 | `base`     | ~145 MB | Fast           | Good speed/accuracy balance |
-| `small`    | ~483 MB | Moderate       | **Default** — better accuracy |
+| `small`    | ~483 MB | Moderate       | **Default** - better accuracy |
 | `medium`   | ~1.5 GB | Slow on CPU    | Recommended with a GPU     |
 | `large-v3` | ~3 GB   | Slowest        | Best accuracy available    |
 
@@ -636,7 +657,7 @@ TRANSCRIBER_MAX_TRANSCRIPT_CHARS=80000 python transcribe.py meeting_20260527_114
 
 ---
 
-## Platform Notes — Pop!\_OS 24.04 with COSMIC Desktop
+## Platform Notes - Pop!\_OS 24.04 with COSMIC Desktop
 
 Pop!\_OS 24.04 runs PipeWire with the `pipewire-pulse` compatibility layer, so all `pactl` commands and FFmpeg's `-f pulse` flag work transparently. There is one known platform-specific issue to be aware of.
 
@@ -645,7 +666,7 @@ Pop!\_OS 24.04 runs PipeWire with the `pipewire-pulse` compatibility layer, so a
 Some machines running kernel 6.16.x experience an intermittent regression where the HDA audio driver loses the hardware device and PipeWire falls back to a null sink. `record_meeting.sh` detects this condition at startup and exits with a clear error rather than silently recording silence:
 
 ```
-❌ Error: A dummy/null audio device was detected — your PipeWire session has
+❌ Error: A dummy/null audio device was detected - your PipeWire session has
    lost track of the hardware. Reset it with:
 
    systemctl --user restart wireplumber pipewire pipewire-pulse
@@ -672,11 +693,24 @@ The WAV file was silent or contained only noise below Whisper's detection thresh
 
 **GPU not being used**
 
-For Faster-Whisper transcription, confirm CTranslate2 can see a CUDA device. AMD ROCm is not exposed through this Faster-Whisper path, so AMD-only systems currently transcribe on CPU and can still accelerate the analysis summarisation step.
+For Faster-Whisper transcription, confirm CTranslate2 can see a CUDA or ROCm device:
 
 ```bash
-python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"
+python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count(), ctranslate2.get_supported_compute_types('cuda'))"
 ```
+
+On NVIDIA this requires the standard PyPI `ctranslate2` wheel. On AMD ROCm, the standard PyPI wheel reports 0 devices — run `bash scripts/install_ctranslate2_rocm.sh` to install a ROCm-enabled build (see [AMD ROCm transcription setup](#amd-rocm-transcription-setup) above).
+
+**AMD ROCm transcription: RDNA2 allocator quirk**
+
+Some RDNA2 cards (RX 6000-series) report illegal memory access errors when CTranslate2 loads a Whisper model. If you hit this:
+
+```bash
+export CT2_CUDA_ALLOCATOR=cub_caching
+python transcribe.py <audio.wav>
+```
+
+Add the export to your `.envrc` to make it permanent for the project. The Docker wrapper (`docker-run-transcribe.sh`) passes this variable through automatically when it is set in the host environment.
 
 For analysis summarisation, confirm your hardware is detected by the llama.cpp backend:
 
@@ -722,13 +756,13 @@ whisper_env/bin/python -m pip uninstall -y torchvision
 
 ## Privacy
 
-**Meeting recording path** — everything runs entirely on your local machine:
+**Meeting recording path** - everything runs entirely on your local machine:
 
 - **Faster-Whisper** runs the Whisper model locally via CTranslate2
 - The analysis model is downloaded once and runs fully offline thereafter
 - No audio, transcript, or report data is ever transmitted anywhere
 
-**YouTube summarization path** — two outbound requests are made:
+**YouTube summarization path** - two outbound requests are made:
 
 - The video title is fetched from YouTube's public [oEmbed endpoint](https://www.youtube.com/oembed) (a single lightweight JSON request, no authentication)
 - The transcript text is fetched from YouTube's public subtitle endpoint via [`youtube-transcript-api`](https://github.com/jdepoix/youtube-transcript-api)
