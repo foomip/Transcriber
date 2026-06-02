@@ -114,6 +114,25 @@ Installed automatically into the virtual environment during setup (see below).
 | `nvidia-ml-py`            | Provides `pynvml` for NVIDIA GPU VRAM probing                                   |
 | `youtube-transcript-api`  | Fetches YouTube captions/subtitles without an API key or headless browser      |
 
+### Hardware Recommendations
+
+The pipeline has two main stages: transcription (Faster-Whisper) and summarization (llama.cpp with Gemma‑4).
+Below are GPU recommendations for each stage.
+
+**Transcription (NVIDIA CUDA only)**
+- Minimum: Any NVIDIA GPU with **2 GB VRAM** (e.g. GTX 1650, RTX 3050) – will run the Whisper small model in FP16.
+- Recommended: **4 GB VRAM or more** (e.g. RTX 3060, RTX 4060) for comfortable headroom and faster throughput.
+- AMD GPUs: Transcription falls back to CPU; a modern CPU with 8 GB+ RAM is sufficient.
+
+**Summarization (llama.cpp, works with CUDA and ROCm)**
+- Minimum: **8 GB VRAM** (NVIDIA or AMD) – loads the Gemma‑4 E4B Q4_K_M model with limited GPU offloading.
+- Recommended: **12 GB VRAM or more** (e.g. RTX 3060‑12GB, RTX 4070‑12GB, RX 7900 XT) for smoother layer offloading and better throughput, especially with longer meetings.
+- VRAM scales with context length; for very long transcripts (>1 h) consider 16 GB+.
+
+**Overall system**
+- RAM: 8 GB+ system memory is adequate; 16 GB+ recommended for multitasking.
+- Storage: A few GB for models and temporary files; SSD preferred for faster model loading.
+
 ---
 
 ## Installation
