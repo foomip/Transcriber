@@ -159,12 +159,19 @@ def _detect_gpu() -> tuple[str, str]:
     # NVIDIA check
     try:
         import pynvml # type: ignore
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        name = pynvml.nvmlDeviceGetName(handle)
-        if isinstance(name, bytes):
-            name = name.decode("utf-8")
-        return "cuda", name
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode("utf-8")
+            return "cuda", name
+        finally:
+            # Ensure NVML resources are released
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
     except (ImportError, Exception) as exc:
         # Log failure for easier debugging in Docker
         if os.environ.get("DEBUG") == "1":
@@ -197,10 +204,16 @@ def _detect_gpu() -> tuple[str, str]:
 def _nvidia_free_vram_bytes() -> int | None:
     try:
         import pynvml  # type: ignore
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        return info.free
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            return info.free
+        finally:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
     except (ImportError, Exception):
         return None
 
