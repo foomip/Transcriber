@@ -80,8 +80,12 @@ GPU[0]          : Card model: 0x747e
 
 def test_detect_gpu_cpu(monkeypatch):
     monkeypatch.setattr(os.path, "exists", lambda path: False)
-    # Ensure pynvml import fails
-    monkeypatch.setitem(sys.modules, "pynvml", None)
+    # Inject stub pynvml module that raises on usage
+    stub = types.SimpleNamespace(
+        nvmlInit=lambda: (_ for _ in ()).throw(RuntimeError("NVML not available")),
+        nvmlDeviceGetCount=lambda: (_ for _ in ()).throw(RuntimeError("NVML not available")),
+    )
+    monkeypatch.setitem(sys.modules, "pynvml", stub)
 
     kind, name = analysis._detect_gpu()
     assert kind == "cpu"
