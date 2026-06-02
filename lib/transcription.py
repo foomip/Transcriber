@@ -8,15 +8,16 @@ Responsibilities:
 """
 
 import os
+import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
 import ctranslate2
-import torch
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment, TranscriptionInfo
 
+from lib.hardware import parse_rocm_product_name
 from lib.progress import ProgressTimer
 from lib.languages import SUPPORTED_LANGUAGES
 
@@ -65,9 +66,8 @@ def detect_device() -> tuple[str, str]:
     """
     Return (device, compute_type) for Faster-Whisper / CTranslate2.
 
-    Uses CTranslate2's own CUDA probe so PyTorch is only needed for
-    reporting the GPU name — not for the detection itself. Falls back
-    to CPU int8 when no GPU is found.
+    Uses CTranslate2's own CUDA probe so PyTorch is not needed for
+    detection. Falls back to CPU int8 when no GPU is found.
     """
     get_cuda_device_count = cast(
         Callable[[], int], getattr(ctranslate2, "get_cuda_device_count")
@@ -76,17 +76,56 @@ def detect_device() -> tuple[str, str]:
 
     if cuda_count > 0:
         try:
-            gpu_name = torch.cuda.get_device_name(0)
+            import pynvml
+
+            pynvml.nvmlInit()
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                gpu_name = pynvml.nvmlDeviceGetName(handle)
+            finally:
+                try:
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    pass
+            if isinstance(gpu_name, bytes):
+                gpu_name = gpu_name.decode("utf-8")
             print(f"  ✅ GPU detected: {gpu_name}")
-        except Exception:
+        except Exception as exc:
+            if os.environ.get("DEBUG") == "1":
+                print(f"  DEBUG: NVIDIA name lookup failed: {exc}")
             print(f"  ✅ {cuda_count} CUDA GPU(s) detected")
         return "cuda", "float16"
 
-    if getattr(torch.version, "hip", None) and torch.cuda.is_available():
+    if os.environ.get("DEBUG") == "1" and os.path.exists("/dev/nvidia0"):
         try:
-            gpu_name = torch.cuda.get_device_name(0)
-            print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
-        except Exception:
+            nvidia_devices = sorted(
+                entry for entry in os.listdir("/dev") if entry.startswith("nvidia")
+            )
+            print(
+                "  DEBUG: CUDA runtime reported 0 visible devices, but NVIDIA device nodes exist: "
+                + ", ".join(f"/dev/{entry}" for entry in nvidia_devices)
+            )
+        except OSError as exc:
+            print(f"  DEBUG: Could not inspect /dev for NVIDIA device nodes: {exc}")
+
+    # AMD / ROCm check
+    if os.path.exists("/dev/kfd"):
+        try:
+            res = subprocess.check_output(
+                ["rocm-smi", "--showproductname"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            gpu_name = parse_rocm_product_name(res)
+            if gpu_name:
+                print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
+            else:
+                if os.environ.get("DEBUG") == "1":
+                    print("  DEBUG: Could not parse a ROCm GPU name from rocm-smi output")
+                print("  ℹ️  ROCm GPU detected for summarization")
+        except Exception as exc:
+            if os.environ.get("DEBUG") == "1":
+                print(f"  DEBUG: ROCm name lookup failed: {exc}")
             print("  ℹ️  ROCm GPU detected for summarization")
         print("  ℹ️  Faster-Whisper does not expose ROCm here — transcribing on CPU")
         return "cpu", "int8"

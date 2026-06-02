@@ -99,7 +99,7 @@ These decisions were confirmed before planning and govern the implementation:
 
 ---
 
-## 5. Phase 1 — Python Analysis Core (`lib/analysis/`)
+## 5. Phase 1 — Python Analysis Core (`lib/analysis/`) - IMPLEMENTED
 
 ### 5.1 `backend.py`
 
@@ -211,7 +211,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 6. Phase 2 — Dependencies
+## 6. Phase 2 — Dependencies - IMPLEMENTED
 
 `requirements.txt`:
 
@@ -225,7 +225,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 7. Phase 3 — Dockerfiles
+## 7. Phase 3 — Dockerfiles - IMPLEMENTED
 
 - `Dockerfile.base`: add `cmake`, `ninja-build`, `pkg-config`; build a CPU
   `llama-cpp-python`. (Already installs OS deps and the non-torch requirements.)
@@ -244,7 +244,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 8. Phase 4 — `docker-run-transcribe.sh`
+## 8. Phase 4 — `docker-run-transcribe.sh` - IMPLEMENTED
 
 - Collapse the `rocm` and `rocm-llama` backends into a single `rocm` backend
   across:
@@ -267,7 +267,7 @@ Keep the llama.cpp path only:
 
 ---
 
-## 9. Phase 5 — Tests
+## 9. Phase 5 — Tests - IMPLEMENTED
 
 `tests/test_analysis.py`:
 

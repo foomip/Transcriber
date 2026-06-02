@@ -1,5 +1,8 @@
+import os
+import subprocess
 import sys
 import types
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,175 +32,256 @@ class FakeLlamaCppModel:
         return self.response
 
 
-def test_detect_analysis_backend_reports_cuda(monkeypatch):
-    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "CUDA GPU")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (_ for _ in ()).throw(RuntimeError("no device")),
+def test_detect_gpu_nvidia(monkeypatch):
+    mock_pynvml = MagicMock()
+    mock_pynvml.nvmlDeviceGetName.return_value = "NVIDIA RTX 3060"
+    monkeypatch.setitem(sys.modules, "pynvml", mock_pynvml)
+    monkeypatch.setattr(os.path, "exists", lambda path: path != "/dev/kfd")
+    
+    kind, name = analysis_backend._detect_gpu()
+    assert kind == "cuda"
+    assert name == "NVIDIA RTX 3060"
+
+
+def test_detect_gpu_amd(monkeypatch):
+    monkeypatch.setattr(os.path, "exists", lambda path: path == "/dev/kfd")
+
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showproductname"]:
+            return "GPU  Product Name\n0    Navi 21"
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    kind, name = analysis._detect_gpu()
+    assert kind == "rocm"
+    assert name == "Navi 21"
+
+
+def test_detect_gpu_amd_parses_verbose_rocm_smi_output(monkeypatch):
+    monkeypatch.setattr(os.path, "exists", lambda path: path == "/dev/kfd")
+
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showproductname"]:
+            return """
+====================    ROCm System Management Interface    ====================
+======================================== Product Info ========================================
+GPU[0]          : Card series: Radeon RX 7800 XT
+GPU[0]          : Card model: 0x747e
+"""
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    kind, name = analysis._detect_gpu()
+    assert kind == "rocm"
+    assert name == "Radeon RX 7800 XT"
+
+
+def test_detect_gpu_cpu(monkeypatch):
+    monkeypatch.setattr(os.path, "exists", lambda path: False)
+    # Inject stub pynvml module that raises on usage
+    stub = types.SimpleNamespace(
+        nvmlInit=lambda: (_ for _ in ()).throw(RuntimeError("NVML not available")),
+        nvmlDeviceGetCount=lambda: (_ for _ in ()).throw(RuntimeError("NVML not available")),
     )
-    monkeypatch.setattr(analysis.torch.version, "hip", None, raising=False)
+    monkeypatch.setitem(sys.modules, "pynvml", stub)
+
+    kind, name = analysis._detect_gpu()
+    assert kind == "cpu"
+    assert name == "CPU"
+
+
+def test_nvidia_free_vram_bytes(monkeypatch):
+    mock_pynvml = MagicMock()
+    mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = types.SimpleNamespace(free=1024 * 1024 * 1024, total=2048 * 1024 * 1024)
+    monkeypatch.setitem(sys.modules, "pynvml", mock_pynvml)
+    
+    assert analysis_backend._nvidia_free_vram_bytes() == 1024 * 1024 * 1024
+
+
+def test_amd_free_vram_bytes(monkeypatch):
+    monkeypatch.setattr(os.path, "exists", lambda path: True)  # Not used by this func but good practice
+
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showmeminfo", "vram"]:
+            return "GPU  VRAM Total  VRAM Used  VRAM %\n0    12288MB    2288MB     18%"
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    assert analysis._amd_free_vram_bytes() == (12288 - 2288) * 1024 * 1024
+
+
+
+def test_amd_free_vram_bytes_parses_verbose_byte_output(monkeypatch):
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showmeminfo", "vram"]:
+            return """
+====================    ROCm System Management Interface    ====================
+================================ Memory Usage (Bytes) ================================
+GPU[0]          : VRAM Total Memory (B): 17163091968
+GPU[0]          : VRAM Total Used Memory (B): 1073741824
+================================================================================
+"""
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    assert analysis._amd_free_vram_bytes() == 16089350144
+
+
+
+def test_amd_free_vram_bytes_uses_amdsmi_when_available(monkeypatch):
+    fake_amdsmi = types.SimpleNamespace(
+        amdsmi_init=MagicMock(),
+        amdsmi_get_processor_handles=lambda: ["gpu0"],
+        amdsmi_get_gpu_vram_usage=lambda handle: {
+            "vram_total": 16 * analysis._GIB,
+            "vram_used": 2 * analysis._GIB,
+        },
+        amdsmi_shut_down=MagicMock(),
+    )
+    monkeypatch.setitem(sys.modules, "amdsmi", fake_amdsmi)
+
+    assert analysis._amd_free_vram_bytes() == 14 * analysis._GIB
+    fake_amdsmi.amdsmi_init.assert_called_once_with()
+    fake_amdsmi.amdsmi_shut_down.assert_called_once_with()
+
+
+
+def test_amd_free_vram_bytes_falls_back_to_sysfs_bytes(tmp_path, monkeypatch):
+    sysfs_dir = tmp_path / "card1" / "device"
+    sysfs_dir.mkdir(parents=True)
+    (sysfs_dir / "mem_info_vram_total").write_text(str(16 * analysis._GIB), encoding="utf-8")
+    (sysfs_dir / "mem_info_vram_used").write_text(str(2 * analysis._GIB), encoding="utf-8")
+
+    monkeypatch.delitem(sys.modules, "amdsmi", raising=False)
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(analysis_backend.glob, "glob", lambda pattern: [str(sysfs_dir / "mem_info_vram_total")])
+
+    assert analysis._amd_free_vram_bytes() == 14 * analysis._GIB
+
+
+def test_detect_analysis_backend_returns_llama_cpp_on_cuda(monkeypatch):
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda path: True)
+    monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 8 * analysis._GIB)
 
     backend = analysis.detect_analysis_backend()
 
     assert backend.name == "cuda"
-    assert backend.device_name == "CUDA GPU"
-    assert backend.model_id == analysis.DEFAULT_ANALYSIS_MODEL_ID
-    assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
-
-
-def test_detect_analysis_backend_reports_rocm(monkeypatch):
-    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
-    monkeypatch.setenv(analysis.ANALYSIS_BACKEND_ENV, analysis.TRANSFORMERS_BACKEND_NAME)
-    monkeypatch.delenv(analysis.GPU_HEADROOM_ENV, raising=False)
-    monkeypatch.delenv(analysis.GPU_MAX_MEMORY_ENV, raising=False)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (16 * analysis._GIB, 16 * analysis._GIB),
-    )
-    monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
-    monkeypatch.setattr(analysis_backend, "_available_ram_bytes", lambda: 64 * analysis._GIB)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.name == "rocm"
-    assert backend.device_name == "ROCm GPU"
-    assert backend.model_id == analysis.DEFAULT_ROCM_ANALYSIS_MODEL_ID
-    assert backend.engine == analysis.TRANSFORMERS_BACKEND_NAME
-    assert backend.use_plain_prompt is True
-    assert backend.max_new_tokens == analysis.ROCM_ANALYSIS_MAX_NEW_TOKENS
-    assert backend.model_kwargs == {
-        "device_map": {"": "cuda"},
-        "torch_dtype": analysis.torch.float16,
-        "attn_implementation": analysis.ROCM_ATTENTION_IMPLEMENTATION,
-    }
-    assert "ROCm analysis model" in backend.notes[0]
-    assert "DEPRECATED" in backend.notes[1]
-    assert "fully on GPU" in backend.notes[2]
-    assert "float16 with eager attention" in backend.notes[3]
-
-
-def test_detect_analysis_backend_respects_model_override_on_rocm(monkeypatch):
-    monkeypatch.setenv(analysis.ANALYSIS_MODEL_ENV, "custom/model")
-    monkeypatch.delenv(analysis.ANALYSIS_BACKEND_ENV, raising=False)
-    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
-    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
-    monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.engine == analysis.TRANSFORMERS_BACKEND_NAME
-    assert backend.model_id == "custom/model"
-    assert backend.model_kwargs == {
-        "device_map": {"": "cuda"},
-        "torch_dtype": analysis.torch.float16,
-        "attn_implementation": analysis.ROCM_ATTENTION_IMPLEMENTATION,
-    }
-    assert "Using TRANSCRIBER_ANALYSIS_MODEL=custom/model" in backend.notes[0]
-    assert "DEPRECATED" in backend.notes[1]
-
-
-def test_detect_analysis_backend_prefers_llama_cpp_on_rocm_when_available(tmp_path, monkeypatch):
-    model_path = tmp_path / "model.gguf"
-    model_path.write_bytes(b"0" * analysis._GIB)
-    monkeypatch.delenv(analysis.ANALYSIS_BACKEND_ENV, raising=False)
-    monkeypatch.setenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, str(model_path))
-    monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
-    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "28000")
-    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (8 * analysis._GIB, 8 * analysis._GIB),
-    )
-    monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.name == "rocm"
-    assert backend.device_name == "ROCm GPU"
-    assert backend.engine == analysis.LLAMA_CPP_BACKEND_NAME
-    assert backend.model_id == str(model_path)
-    assert backend.model_kwargs["model_path"] == str(model_path)
-    assert backend.model_kwargs["n_ctx"] == analysis._required_llama_cpp_context_size()
-    assert backend.model_kwargs["n_ctx"] > analysis.DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE
-    assert backend.model_kwargs["n_batch"] == analysis.DEFAULT_ROCM_LLAMA_CPP_BATCH_SIZE
-    assert 0 < backend.model_kwargs["n_gpu_layers"] <= 32
+    assert backend.device_name == "RTX 3060"
     assert "llama.cpp" in backend.notes[0]
-    assert "splits layers" in backend.notes[1]
+    assert backend.max_new_tokens == 2048
 
 
-def test_detect_analysis_backend_forces_llama_cpp_on_rocm_without_import(tmp_path, monkeypatch):
+def test_detect_analysis_backend_returns_llama_cpp_on_rocm(monkeypatch):
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("rocm", "Navi 21"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda path: True)
+    monkeypatch.setattr(analysis_backend, "_amd_free_vram_bytes", lambda: 8 * analysis._GIB)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.name == "rocm"
+    assert backend.device_name == "Navi 21"
+    assert "llama.cpp" in backend.notes[0]
+    assert backend.max_new_tokens == 2048
+
+
+def test_detect_analysis_backend_preserves_rocm_kind_when_name_is_generic(monkeypatch):
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("rocm", "Radeon RX 7800 XT"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda path: True)
+    monkeypatch.setattr(analysis_backend, "_amd_free_vram_bytes", lambda: 8 * analysis._GIB)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.name == "rocm"
+    assert backend.device_name == "Radeon RX 7800 XT"
+
+
+def test_detect_analysis_backend_returns_llama_cpp_on_cpu(monkeypatch):
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cpu", "CPU"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda path: True)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.name == "cpu"
+    assert backend.device_name == "CPU"
+    assert "llama.cpp" in backend.notes[0]
+    assert backend.max_new_tokens == 2048
+
+
+def test_detect_analysis_backend_sizes_context_from_actual_transcript(tmp_path, monkeypatch):
+    model_path = tmp_path / analysis.DEFAULT_LLAMA_CPP_MODEL_FILENAME
+    model_path.write_bytes(b"0" * 2 * analysis._GIB)
+
+    monkeypatch.setenv("TRANSCRIBER_MAX_TRANSCRIPT_CHARS", "250000")
+    monkeypatch.delenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, raising=False)
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_path", lambda: str(model_path))
+    monkeypatch.setattr(analysis_backend, "_ensure_llama_cpp_model", lambda path: path)
+    monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 12 * analysis._GIB)
+
+    backend = analysis.detect_analysis_backend(transcript_chars=12_000)
+
+    assert backend.model_kwargs["n_ctx"] < 10_000
+    assert backend.model_kwargs["n_gpu_layers"] > 0
+
+
+def test_llama_cpp_gpu_layers_respects_explicit_override(tmp_path, monkeypatch):
     model_path = tmp_path / "model.gguf"
     model_path.write_bytes(b"0" * analysis._GIB)
-    monkeypatch.setenv(analysis.ANALYSIS_BACKEND_ENV, analysis.LLAMA_CPP_BACKEND_NAME)
-    monkeypatch.setenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, str(model_path))
-    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: False)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (8 * analysis._GIB, 8 * analysis._GIB),
-    )
-    monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, "9")
 
-    backend = analysis.detect_analysis_backend()
+    gpu_layers, notes = analysis._llama_cpp_gpu_layers(str(model_path))
 
-    assert backend.engine == analysis.LLAMA_CPP_BACKEND_NAME
-    assert backend.model_id == str(model_path)
+    assert gpu_layers == 9
+    assert analysis.LLAMA_CPP_GPU_LAYERS_ENV in notes[0]
 
 
-def test_detect_analysis_backend_downloads_missing_llama_cpp_model(tmp_path, monkeypatch):
-    cache_dir = tmp_path / "gguf"
-    model_path = cache_dir / analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_FILENAME
+def test_llama_cpp_gpu_layers_uses_safe_vram_budget(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * 8 * analysis._GIB)
+    monkeypatch.delenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, raising=False)
+    monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
+    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
 
-    monkeypatch.delenv(analysis.ANALYSIS_BACKEND_ENV, raising=False)
-    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
-    monkeypatch.delenv(analysis.LLAMA_CPP_MODEL_PATH_ENV, raising=False)
-    monkeypatch.setenv(analysis.LLAMA_CPP_CACHE_DIR_ENV, str(cache_dir))
-    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(analysis.torch.cuda, "get_device_name", lambda _index: "ROCm GPU")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (8 * analysis._GIB, 8 * analysis._GIB),
-    )
-    monkeypatch.setattr(analysis.torch.version, "hip", "6.0", raising=False)
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
+    monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 6 * analysis._GIB)
 
-    def fake_download(path):
-        assert path == str(model_path)
-        model_path.parent.mkdir(parents=True)
-        model_path.write_bytes(b"0" * analysis._GIB)
+    gpu_layers, notes = analysis._llama_cpp_gpu_layers(str(model_path))
 
-    monkeypatch.setattr(analysis_backend, "_download_llama_cpp_model", fake_download)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.engine == analysis.LLAMA_CPP_BACKEND_NAME
-    assert backend.model_id == str(model_path)
-    assert backend.model_kwargs["model_path"] == str(model_path)
-    assert model_path.exists()
+    assert gpu_layers == 11
+    assert "11/32" in notes[0]
 
 
-def test_rocm_llama_cpp_defaults_use_gemma4_e4b():
-    assert analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_REPO_ID == "ggml-org/gemma-4-E4B-it-GGUF"
-    assert analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_FILENAME == "gemma-4-E4B-it-Q4_K_M.gguf"
-    assert analysis.DEFAULT_ROCM_LLAMA_CPP_LAYER_COUNT == 42
+
+def test_llama_cpp_gpu_layers_reports_rocm_offload_like_cuda(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * 8 * analysis._GIB)
+    monkeypatch.delenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, raising=False)
+    monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
+    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
+
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("rocm", "AMD Radeon RX 6800"))
+    monkeypatch.setattr(analysis_backend, "_amd_free_vram_bytes", lambda: 6 * analysis._GIB)
+
+    gpu_layers, notes = analysis._llama_cpp_gpu_layers(str(model_path))
+
+    assert gpu_layers == 11
+    assert "11/32" in notes[0]
 
 
 def test_ensure_llama_cpp_model_downloads_from_huggingface(tmp_path, monkeypatch):
-    model_path = tmp_path / analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_FILENAME
+    model_path = tmp_path / analysis.DEFAULT_LLAMA_CPP_MODEL_FILENAME
     downloaded_path = tmp_path / "downloaded.gguf"
     downloaded_path.write_bytes(b"model")
     calls = []
@@ -218,124 +302,11 @@ def test_ensure_llama_cpp_model_downloads_from_huggingface(tmp_path, monkeypatch
     assert model_path.read_bytes() == b"model"
     assert calls == [
         {
-            "repo_id": analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_REPO_ID,
-            "filename": analysis.DEFAULT_ROCM_LLAMA_CPP_MODEL_FILENAME,
+            "repo_id": analysis.DEFAULT_LLAMA_CPP_MODEL_REPO_ID,
+            "filename": analysis.DEFAULT_LLAMA_CPP_MODEL_FILENAME,
             "local_dir": str(tmp_path),
         }
     ]
-
-
-def test_rocm_llama_cpp_gpu_layers_respects_explicit_override(tmp_path, monkeypatch):
-    model_path = tmp_path / "model.gguf"
-    model_path.write_bytes(b"0" * analysis._GIB)
-    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, "9")
-
-    gpu_layers, notes = analysis._rocm_llama_cpp_gpu_layers(str(model_path))
-
-    assert gpu_layers == 9
-    assert analysis.LLAMA_CPP_GPU_LAYERS_ENV in notes[0]
-
-
-def test_rocm_llama_cpp_gpu_layers_uses_safe_vram_budget(tmp_path, monkeypatch):
-    model_path = tmp_path / "model.gguf"
-    model_path.write_bytes(b"0" * 8 * analysis._GIB)
-    monkeypatch.delenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, raising=False)
-    monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
-    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
-    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
-    monkeypatch.setattr(
-        analysis.torch.cuda,
-        "mem_get_info",
-        lambda: (6 * analysis._GIB, 8 * analysis._GIB),
-    )
-
-    gpu_layers, notes = analysis._rocm_llama_cpp_gpu_layers(str(model_path))
-
-    assert gpu_layers == 12
-    assert "12/32" in notes[0]
-
-
-def test_detect_analysis_backend_cpu_with_avx512_bf16_uses_auto_dtype(monkeypatch):
-    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(analysis_backend, "_cpu_supports_avx512_bf16", lambda: True)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.name == "cpu"
-    assert backend.device_name == "CPU"
-    assert backend.model_id == analysis.DEFAULT_ANALYSIS_MODEL_ID
-    assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
-    assert "AVX-512 BF16" in backend.notes[0]
-
-
-def test_detect_analysis_backend_cpu_without_avx512_bf16_uses_float32_when_ram_sufficient(monkeypatch):
-    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(analysis_backend, "_cpu_supports_avx512_bf16", lambda: False)
-    monkeypatch.setattr(analysis_backend, "_available_ram_bytes", lambda: 64 * analysis._GIB)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.name == "cpu"
-    assert backend.device_name == "CPU"
-    assert backend.model_id == analysis.DEFAULT_ANALYSIS_MODEL_ID
-    assert backend.model_kwargs == {
-        "device_map": "auto",
-        "torch_dtype": analysis.torch.float32,
-    }
-    assert "float32" in backend.notes[0]
-    assert "lacks" in backend.notes[0]
-
-
-def test_detect_analysis_backend_cpu_without_avx512_bf16_falls_back_to_bf16_when_insufficient_ram(monkeypatch):
-    monkeypatch.delenv(analysis.ANALYSIS_MODEL_ENV, raising=False)
-    monkeypatch.setattr(analysis.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(analysis_backend, "_cpu_supports_avx512_bf16", lambda: False)
-    monkeypatch.setattr(analysis_backend, "_available_ram_bytes", lambda: 16 * analysis._GIB)
-
-    backend = analysis.detect_analysis_backend()
-
-    assert backend.name == "cpu"
-    assert backend.device_name == "CPU"
-    assert backend.model_kwargs == {"device_map": "auto", "torch_dtype": "auto"}
-    assert "falling back" in backend.notes[0]
-
-
-def test_cpu_supports_avx512_bf16_returns_true_when_flag_present(tmp_path, monkeypatch):
-    cpuinfo = tmp_path / "cpuinfo"
-    cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu avx2 avx512f avx512_bf16 sse4_2\n")
-    monkeypatch.setattr(analysis_backend, "_CPUINFO_PATH", str(cpuinfo))
-
-    assert analysis._cpu_supports_avx512_bf16() is True
-
-
-def test_cpu_supports_avx512_bf16_returns_false_when_flag_absent(tmp_path, monkeypatch):
-    cpuinfo = tmp_path / "cpuinfo"
-    cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu avx2 avx512f sse4_2\n")
-    monkeypatch.setattr(analysis_backend, "_CPUINFO_PATH", str(cpuinfo))
-
-    assert analysis._cpu_supports_avx512_bf16() is False
-
-
-def test_cpu_supports_avx512_bf16_returns_false_when_file_missing(monkeypatch):
-    monkeypatch.setattr(analysis_backend, "_CPUINFO_PATH", "/nonexistent/cpuinfo")
-
-    assert analysis._cpu_supports_avx512_bf16() is False
-
-
-def test_available_ram_bytes_returns_value_from_meminfo(tmp_path, monkeypatch):
-    meminfo = tmp_path / "meminfo"
-    meminfo.write_text("MemTotal:       131815760 kB\nMemAvailable:   65536000 kB\n")
-    monkeypatch.setattr(analysis_backend, "_MEMINFO_PATH", str(meminfo))
-
-    assert analysis._available_ram_bytes() == 65536000 * 1024
-
-
-def test_available_ram_bytes_returns_none_when_file_missing(monkeypatch):
-    monkeypatch.setattr(analysis_backend, "_MEMINFO_PATH", "/nonexistent/meminfo")
-
-    assert analysis._available_ram_bytes() is None
 
 
 def test_build_user_message_includes_sections_metadata_and_transcript():
@@ -390,12 +361,19 @@ def test_required_llama_cpp_context_size_scales_with_transcript_budget(monkeypat
     large = analysis._required_llama_cpp_context_size()
 
     # Even the smallest transcript needs more than the legacy 4096 window.
-    assert small > analysis.DEFAULT_ROCM_LLAMA_CPP_CONTEXT_SIZE
+    assert small > analysis.DEFAULT_LLAMA_CPP_CONTEXT_SIZE
     assert large > small
-    assert large <= analysis.DEFAULT_ROCM_LLAMA_CPP_MAX_CONTEXT_SIZE
+    assert large <= analysis.DEFAULT_LLAMA_CPP_MAX_CONTEXT_SIZE
     # Window must hold the whole transcript prompt plus the generation budget.
-    expected_min = 28000 / analysis.LLAMA_CPP_CHARS_PER_TOKEN + analysis.ROCM_ANALYSIS_MAX_NEW_TOKENS
+    expected_min = 28000 / analysis.LLAMA_CPP_CHARS_PER_TOKEN + 2048
     assert small >= expected_min
+
+
+def test_required_llama_cpp_context_size_uses_actual_transcript_when_known():
+    context_size = analysis._required_llama_cpp_context_size(transcript_chars=12_000)
+
+    assert context_size < 10_000
+    assert context_size >= 12_000 / analysis.LLAMA_CPP_CHARS_PER_TOKEN + 2048
 
 
 def test_required_llama_cpp_context_size_respects_env_override(monkeypatch):
@@ -419,6 +397,32 @@ class FakeTokenizingLlamaCppModel(FakeLlamaCppModel):
 
     def detokenize(self, tokens):
         return bytes(tokens)
+
+
+def test_generate_summaries_passes_transcript_length_to_backend(monkeypatch):
+    seen = {}
+
+    def fake_detect_analysis_backend(transcript_chars=None):
+        seen["transcript_chars"] = transcript_chars
+        return analysis.AnalysisBackend(
+            name="cpu",
+            device_name="CPU",
+            model_id="fake.gguf",
+            model_kwargs={"model_path": "fake.gguf", "n_ctx": 4096, "n_gpu_layers": 0},
+        )
+
+    monkeypatch.setattr(analysis, "detect_analysis_backend", fake_detect_analysis_backend)
+    monkeypatch.setattr(
+        analysis,
+        "_generate_report_with_llama_cpp",
+        lambda backend, transcript_body, meta: "## Executive Summary\nOK\n\n## Detailed Summary\nOK\n\n## Action Items\nNone explicitly stated.\n\n## Key Decisions\nNone explicitly stated.\n\n## Topics Discussed\nTesting.",
+    )
+    monkeypatch.setattr(analysis, "_validate_grounding", lambda generated_report, transcript_body: None)
+
+    sections = analysis.generate_summaries("short transcript", BASE_META)
+
+    assert seen["transcript_chars"] == len("short transcript")
+    assert sections[0][0] == "## Executive Summary"
 
 
 def test_fit_prompt_to_context_trims_oversized_prompt():

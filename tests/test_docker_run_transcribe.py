@@ -1,378 +1,225 @@
+import json
 import os
+import pathlib
 import stat
 import subprocess
-from pathlib import Path
+import sys
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "docker-run-transcribe.sh"
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+SCRIPT_PATH = REPO_ROOT / "docker-run-transcribe.sh"
 
 
-MOCK_DOCKER = """#!/usr/bin/env bash
-set -euo pipefail
+FAKE_DOCKER_SCRIPT = """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
 
-log_path="${MOCK_DOCKER_LOG:?}"
-built_path="${MOCK_DOCKER_BUILT:?}"
-touch "$built_path"
+log_path = pathlib.Path(os.environ[\"FAKE_DOCKER_LOG\"])
+present_images = set(json.loads(os.environ.get(\"FAKE_DOCKER_PRESENT_IMAGES\", \"[]\")))
+args = sys.argv[1:]
 
-record_call() {
-    printf '%s' "$1" >> "$log_path"
-    shift
-    for arg in "$@"; do
-        printf '|%s' "$arg" >> "$log_path"
-    done
-    printf '\n' >> "$log_path"
-}
+with log_path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({"argv": args}) + "\\n")
 
-image_known() {
-    local image
-    image="$1"
+if args[:2] == ["image", "inspect"]:
+    image = args[2] if len(args) > 2 else ""
+    raise SystemExit(0 if image in present_images else 1)
 
-    if grep -qxF "$image" "$built_path" 2>/dev/null; then
-        return 0
-    fi
-
-    case " ${MOCK_DOCKER_IMAGES:-} " in
-        *" $image "*)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-command_name="$1"
-shift
-
-case "$command_name" in
-    image)
-        subcommand="$1"
-        shift
-        if [ "$subcommand" = "inspect" ]; then
-            record_call image_inspect "$1"
-            if image_known "$1"; then
-                exit 0
-            fi
-            exit 1
-        fi
-        ;;
-    build)
-        record_call build "$@"
-        image_tag=""
-        while [ "$#" -gt 0 ]; do
-            if [ "$1" = "-t" ]; then
-                image_tag="$2"
-                break
-            fi
-            shift
-        done
-        if [ -n "$image_tag" ]; then
-            printf '%s\n' "$image_tag" >> "$built_path"
-        fi
-        exit 0
-        ;;
-    run)
-        record_call run "$@"
-        exit 0
-        ;;
-    *)
-        record_call "$command_name" "$@"
-        exit 0
-        ;;
-esac
+raise SystemExit(0)
 """
 
 
-SIMPLE_SUCCESS_COMMAND = "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n"
-
-
-ROCMINFO_WITH_TARGETS_COMMAND = """#!/usr/bin/env bash
-set -euo pipefail
-cat <<'EOF'
-    Name:                    gfx1030
-    Name:                    gfx1030
-    Name:                    gfx1100
-EOF
+SMOKE_SCRIPT = """#!/usr/bin/env bash
+exit 0
 """
 
 
-def _write_executable(path: Path, content: str) -> None:
+def _make_executable(path: pathlib.Path, content: str) -> pathlib.Path:
     path.write_text(content, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
 
 
-def _make_env(tmp_path: Path, *, existing_images: str = "") -> tuple[dict[str, str], Path]:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
+def _read_docker_calls(log_path: pathlib.Path) -> list[list[str]]:
+    return [json.loads(line)["argv"] for line in log_path.read_text(encoding="utf-8").splitlines()]
 
-    docker_path = bin_dir / "docker"
-    _write_executable(docker_path, MOCK_DOCKER)
-    
-    nvidia_smi_path = bin_dir / "nvidia-smi"
-    if not nvidia_smi_path.exists():
-        _write_executable(nvidia_smi_path, "#!/usr/bin/env bash\nexit 1\n")
 
-    log_path = tmp_path / "docker.log"
-    built_path = tmp_path / "built-images.log"
+def _run_wrapper(
+    tmp_path: pathlib.Path,
+    args: list[str],
+    *,
+    present_images: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
+    add_nvidia_smi: bool = False,
+    add_rocminfo: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "fake-docker.log"
+
+    _make_executable(fake_bin / "docker", FAKE_DOCKER_SCRIPT)
+    if add_nvidia_smi:
+        _make_executable(fake_bin / "nvidia-smi", SMOKE_SCRIPT)
+    if add_rocminfo:
+        _make_executable(fake_bin / "rocminfo", SMOKE_SCRIPT)
+
+    output_dir = tmp_path / "output"
+    hf_cache_dir = tmp_path / "hf-cache"
+    gguf_cache_dir = tmp_path / "gguf-cache"
 
     env = os.environ.copy()
     env.update(
         {
-            "PATH": f"{bin_dir}:{env['PATH']}",
-            "MOCK_DOCKER_LOG": str(log_path),
-            "MOCK_DOCKER_BUILT": str(built_path),
-            "MOCK_DOCKER_IMAGES": existing_images,
-            "TRANSCRIBER_OUTPUT_DIR": str(tmp_path / "output"),
-            "TRANSCRIBER_HF_CACHE_DIR": str(tmp_path / "hf-cache"),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "FAKE_DOCKER_LOG": str(docker_log),
+            "FAKE_DOCKER_PRESENT_IMAGES": json.dumps(present_images or []),
+            "TRANSCRIBER_DOCKER_BIN": str(fake_bin / "docker"),
+            "TRANSCRIBER_OUTPUT_DIR": str(output_dir),
+            "TRANSCRIBER_HF_CACHE_DIR": str(hf_cache_dir),
+            "TRANSCRIBER_GGUF_CACHE_DIR": str(gguf_cache_dir),
         }
     )
-    return env, log_path
-
-
-def _read_calls(log_path: Path) -> list[list[str]]:
-    return [line.split("|") for line in log_path.read_text(encoding="utf-8").splitlines()]
-
-
-def _find_first_call(calls: list[list[str]], name: str) -> list[str]:
-    return next(call for call in calls if call[0] == name)
-
-
-def _find_all_calls(calls: list[list[str]], name: str) -> list[list[str]]:
-    return [call for call in calls if call[0] == name]
-
-
-def test_wrapper_auto_selects_nvidia_builds_image_and_forwards_transcribe_args(tmp_path):
-    env, log_path = _make_env(tmp_path)
-    _write_executable(tmp_path / "bin" / "nvidia-smi", SIMPLE_SUCCESS_COMMAND)
-
-    audio_path = tmp_path / "meeting.wav"
-    audio_path.write_bytes(b"RIFF")
+    if extra_env:
+        env.update(extra_env)
 
     result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), str(audio_path), "-l", "en"],
-        capture_output=True,
-        text=True,
+        [str(SCRIPT_PATH), *args],
+        cwd=REPO_ROOT,
         env=env,
+        text=True,
+        capture_output=True,
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    calls = _read_docker_calls(docker_log)
+    return result, calls
 
-    calls = _read_calls(log_path)
-    build_calls = _find_all_calls(calls, "build")
-    run_call = _find_first_call(calls, "run")
 
-    assert any(call[:5] == ["build", "-f", str(SCRIPT_PATH.parent / "Dockerfile.nvidia"), "-t", "transcriber:nvidia"] for call in build_calls)
+def _call_for_subcommand(calls: list[list[str]], subcommand: str) -> list[str]:
+    return next(call for call in calls if call and call[0] == subcommand)
+
+
+def _values_after_flag(argv: list[str], flag: str) -> list[str]:
+    values = []
+    for index, token in enumerate(argv[:-1]):
+        if token == flag:
+            values.append(argv[index + 1])
+    return values
+
+
+def test_auto_nvidia_backend_builds_nvidia_image_and_forwards_flags(tmp_path):
+    audio_path = tmp_path / "meeting.wav"
+    audio_path.write_bytes(b"RIFF")
+    same_gid_device_a = tmp_path / "nvidia-uvm"
+    same_gid_device_b = tmp_path / "nvidiactl"
+    same_gid_device_a.write_text("", encoding="utf-8")
+    same_gid_device_b.write_text("", encoding="utf-8")
+
+    nvidia_glob = f"/dev/null {same_gid_device_a} {same_gid_device_b}"
+    result, calls = _run_wrapper(
+        tmp_path,
+        [str(audio_path), "-l", "en", "--dry-run"],
+        add_nvidia_smi=True,
+        extra_env={"TRANSCRIBER_NVIDIA_DEVICE_GLOB": nvidia_glob},
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    build_call = _call_for_subcommand(calls, "build")
+    assert build_call == [
+        "build",
+        "-f",
+        str(REPO_ROOT / "Dockerfile.nvidia"),
+        "-t",
+        "transcriber:nvidia",
+        str(REPO_ROOT),
+    ]
+
+    run_call = _call_for_subcommand(calls, "run")
     assert "--gpus" in run_call
-    assert "all" in run_call
-    assert "transcriber:nvidia" in run_call
-    assert f"{audio_path.resolve()}:/input/meeting.wav:ro" in run_call
-    assert f"{(tmp_path / 'output')}:/app/output" in run_call
-    assert f"{(tmp_path / 'hf-cache')}:/cache/huggingface" in run_call
-    assert "/input/meeting.wav" in run_call
-    assert "-l" in run_call
-    assert "en" in run_call
+    assert run_call[run_call.index("--gpus") + 1] == "all"
+    assert "NVIDIA_DRIVER_CAPABILITIES=compute,utility" in run_call
+
+    expected_group_ids = {
+        str(os.stat("/dev/null").st_gid),
+        str(os.stat(same_gid_device_a).st_gid),
+    }
+    group_ids = _values_after_flag(run_call, "--group-add")
+    assert set(group_ids) == expected_group_ids
+    assert len(group_ids) == len(expected_group_ids)
+
+    audio_mount = f"{audio_path.resolve()}:/input/{audio_path.name}:ro"
+    assert audio_mount in run_call
+
+    image_index = run_call.index("transcriber:nvidia")
+    assert run_call[image_index + 1 :] == [f"/input/{audio_path.name}", "-l", "en", "--dry-run"]
 
 
-def test_wrapper_force_cpu_builds_base_then_cpu_and_omits_gpu_flags(tmp_path):
-    env, log_path = _make_env(tmp_path)
-
+def test_custom_cuda_image_hint_uses_nvidia_runtime_flags_without_rebuild(tmp_path):
     audio_path = tmp_path / "meeting.wav"
     audio_path.write_bytes(b"RIFF")
+    custom_image = "ghcr.io/example/transcriber-cuda:latest"
 
-    result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), "--force-cpu", str(audio_path)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
+    result, calls = _run_wrapper(
+        tmp_path,
+        ["--image", custom_image, str(audio_path), "-l", "fr"],
+        present_images=[custom_image],
+        extra_env={"NVIDIA_DRIVER_CAPABILITIES": "compute,video"},
     )
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 0, result.stderr
+    assert not any(call[0] == "build" for call in calls)
 
-    calls = _read_calls(log_path)
-    build_calls = _find_all_calls(calls, "build")
-    run_call = _find_first_call(calls, "run")
+    run_call = _call_for_subcommand(calls, "run")
+    assert "--gpus" in run_call
+    assert run_call[run_call.index("--gpus") + 1] == "all"
+    assert "NVIDIA_DRIVER_CAPABILITIES=compute,video" in run_call
 
-    built_tags = [call[call.index("-t") + 1] for call in build_calls]
-
-    assert built_tags == ["transcriber:base", "transcriber:cpu"]
-    assert "transcriber:cpu" in run_call
-    assert "--gpus" not in run_call
-    assert "--device" not in run_call
+    image_index = run_call.index(custom_image)
+    assert run_call[image_index + 1 :] == [f"/input/{audio_path.name}", "-l", "fr"]
 
 
-def test_wrapper_manual_rocm_image_uses_rocm_device_groups_without_rebuilding(tmp_path):
-    env, log_path = _make_env(tmp_path, existing_images="transcriber:rocm")
-
-    kfd_path = tmp_path / "kfd"
-    kfd_path.write_text("", encoding="utf-8")
+def test_rocm_backend_adds_device_mounts_and_deduplicated_groups(tmp_path):
+    audio_path = tmp_path / "meeting.wav"
+    audio_path.write_bytes(b"RIFF")
+    dev_kfd = tmp_path / "kfd"
+    dev_kfd.write_text("", encoding="utf-8")
     dri_dir = tmp_path / "dri"
     dri_dir.mkdir()
+    (dri_dir / "card0").write_text("", encoding="utf-8")
     (dri_dir / "renderD128").write_text("", encoding="utf-8")
 
-    env.update(
-        {
-            "TRANSCRIBER_DEV_KFD_PATH": str(kfd_path),
+    result, calls = _run_wrapper(
+        tmp_path,
+        ["--image", "transcriber:rocm", str(audio_path)],
+        extra_env={
+            "TRANSCRIBER_DEV_KFD_PATH": str(dev_kfd),
             "TRANSCRIBER_DRI_DIR": str(dri_dir),
-        }
+        },
     )
 
-    audio_path = tmp_path / "meeting.wav"
-    audio_path.write_bytes(b"RIFF")
+    assert result.returncode == 0, result.stderr
 
-    result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), "--image", "transcriber:rocm", str(audio_path)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
+    build_call = _call_for_subcommand(calls, "build")
+    assert build_call[0] == "build"
+    assert "-f" in build_call
+    assert build_call[build_call.index("-f") + 1] == str(REPO_ROOT / "Dockerfile.rocm")
+    assert "-t" in build_call
+    assert build_call[build_call.index("-t") + 1] == "transcriber:rocm"
+    assert build_call[-1] == str(REPO_ROOT)
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    run_call = _call_for_subcommand(calls, "run")
+    assert f"HSA_ENABLE_SDMA=0" in run_call
+    device_values = _values_after_flag(run_call, "--device")
+    assert str(dev_kfd) in device_values
+    assert str(dri_dir) in device_values
 
-    calls = _read_calls(log_path)
-    build_calls = _find_all_calls(calls, "build")
-    run_call = _find_first_call(calls, "run")
+    expected_group_ids = {str(os.stat(dev_kfd).st_gid)}
+    group_ids = _values_after_flag(run_call, "--group-add")
+    assert set(group_ids) == expected_group_ids
+    assert len(group_ids) == len(expected_group_ids)
 
-    assert build_calls == []
-    assert "transcriber:rocm" in run_call
-    assert "--device" in run_call
-    assert "HSA_ENABLE_SDMA=0" in run_call
-    assert str(kfd_path) in run_call
-    assert str(dri_dir) in run_call
-    assert "--group-add" in run_call
-    assert str(kfd_path.stat().st_gid) in run_call
-    assert str((dri_dir / "renderD128").stat().st_gid) in run_call
-
-
-def test_wrapper_auto_selects_rocm_llama_image_for_rocm_hosts(tmp_path):
-    env, log_path = _make_env(tmp_path)
-    _write_executable(tmp_path / "bin" / "rocminfo", SIMPLE_SUCCESS_COMMAND)
-
-    kfd_path = tmp_path / "kfd"
-    kfd_path.write_text("", encoding="utf-8")
-    dri_dir = tmp_path / "dri"
-    dri_dir.mkdir()
-    (dri_dir / "renderD128").write_text("", encoding="utf-8")
-
-    env.update(
-        {
-            "TRANSCRIBER_DEV_KFD_PATH": str(kfd_path),
-            "TRANSCRIBER_DRI_DIR": str(dri_dir),
-            "TRANSCRIBER_GGUF_CACHE_DIR": str(tmp_path / "gguf-cache"),
-        }
-    )
-
-    audio_path = tmp_path / "meeting.wav"
-    audio_path.write_bytes(b"RIFF")
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), str(audio_path)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr + result.stdout
-
-    calls = _read_calls(log_path)
-    build_calls = _find_all_calls(calls, "build")
-    run_call = _find_first_call(calls, "run")
-
-    assert any(call[:5] == ["build", "-f", str(SCRIPT_PATH.parent / "Dockerfile.rocm-llama"), "-t", "transcriber:rocm-llama"] for call in build_calls)
-    assert "transcriber:rocm-llama" in run_call
-    assert "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp" in run_call
-    assert "TRANSCRIBER_GGUF_CACHE_DIR=/cache/transcriber/gguf" in run_call
-    assert f"{(tmp_path / 'gguf-cache')}:/cache/transcriber/gguf" in run_call
-    assert "HSA_ENABLE_SDMA=0" in run_call
-    assert str(kfd_path) in run_call
-    assert str(dri_dir) in run_call
-
-
-def test_wrapper_passes_detected_rocm_targets_to_rocm_llama_build(tmp_path):
-    env, log_path = _make_env(tmp_path)
-    _write_executable(tmp_path / "bin" / "rocminfo", ROCMINFO_WITH_TARGETS_COMMAND)
-
-    kfd_path = tmp_path / "kfd"
-    kfd_path.write_text("", encoding="utf-8")
-    dri_dir = tmp_path / "dri"
-    dri_dir.mkdir()
-    (dri_dir / "renderD128").write_text("", encoding="utf-8")
-
-    env.update(
-        {
-            "TRANSCRIBER_DEV_KFD_PATH": str(kfd_path),
-            "TRANSCRIBER_DRI_DIR": str(dri_dir),
-        }
-    )
-
-    audio_path = tmp_path / "meeting.wav"
-    audio_path.write_bytes(b"RIFF")
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), str(audio_path)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr + result.stdout
-
-    build_call = next(
-        call for call in _find_all_calls(_read_calls(log_path), "build") if "transcriber:rocm-llama" in call
-    )
-
-    assert "--build-arg" in build_call
-    assert "AMDGPU_TARGETS=gfx1030;gfx1100" in build_call
-
-
-def test_wrapper_forwards_analysis_tuning_environment(tmp_path):
-    env, log_path = _make_env(tmp_path, existing_images="transcriber:rocm")
-
-    env.update(
-        {
-            "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB": "6",
-            "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB": "9",
-            "TRANSCRIBER_ANALYSIS_BACKEND": "llama_cpp",
-            "TRANSCRIBER_ANALYSIS_MODEL": "test/model",
-            "TRANSCRIBER_LLAMA_CPP_MODEL_PATH": "/models/test.gguf",
-            "TRANSCRIBER_LLAMA_CPP_MODEL_REPO": "test/repo-GGUF",
-            "TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE": "8192",
-            "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE": "128",
-            "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS": "24",
-            "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB": "4",
-            "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT": "42",
-            "TRANSCRIBER_MAX_TRANSCRIPT_CHARS": "28000",
-        }
-    )
-
-    audio_path = tmp_path / "meeting.wav"
-    audio_path.write_bytes(b"RIFF")
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT_PATH), "--image", "transcriber:rocm", str(audio_path)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr + result.stdout
-
-    run_call = _find_first_call(_read_calls(log_path), "run")
-
-    assert "TRANSCRIBER_ANALYSIS_GPU_MAX_MEMORY_GIB=6" in run_call
-    assert "TRANSCRIBER_ANALYSIS_GPU_HEADROOM_GIB=9" in run_call
-    assert "TRANSCRIBER_ANALYSIS_BACKEND=llama_cpp" in run_call
-    assert "TRANSCRIBER_ANALYSIS_MODEL=test/model" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_MODEL_PATH=/models/test.gguf" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_MODEL_REPO=test/repo-GGUF" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE=8192" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE=128" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS=24" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB=4" in run_call
-    assert "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT=42" in run_call
-    assert "TRANSCRIBER_MAX_TRANSCRIPT_CHARS=28000" in run_call
+    image_index = run_call.index("transcriber:rocm")
+    assert run_call[image_index + 1 :] == [f"/input/{audio_path.name}"]

@@ -3,14 +3,14 @@
 This project has two separate model stages:
 
 1. **Transcription**: speech-to-text, currently handled by Faster-Whisper in `lib/transcription.py`.
-2. **Analysis and summarization**: transcript-to-report generation, handled by a Hugging Face/PyTorch model on CPU, NVIDIA, and Intel, and by llama.cpp with GGUF models for the default AMD ROCm Docker path.
+2. **Analysis and summarization**: transcript-to-report generation, handled by llama.cpp with GGUF models for all hardware targets (CPU, NVIDIA, Intel, and AMD ROCm).
 
 ## Transcription Model Recommendations
 
 The current transcription backend is Faster-Whisper, with:
 
 ```python
-WHISPER_MODEL_SIZE = "base"
+WHISPER_MODEL_SIZE = "small"
 ```
 
 Recommended Faster-Whisper model choices:
@@ -18,7 +18,7 @@ Recommended Faster-Whisper model choices:
 | Model             | Best For                              | Recommendation                                     |
 | ----------------- | ------------------------------------- | -------------------------------------------------- |
 | `tiny`            | Very fast drafts                      | Only use when speed matters more than accuracy     |
-| `base`            | Fast local transcription              | Current default; reasonable for clear speech       |
+| `base`            | Fast local transcription              | Good speed/accuracy balance                        |
 | `small`           | Better accuracy while still practical | Best first upgrade from `base`                     |
 | `medium`          | Higher-quality meeting transcripts    | Good if CPU time is acceptable or GPU is available |
 | `large-v3`        | Best Whisper accuracy                 | Best with NVIDIA CUDA; likely slow on CPU          |
@@ -50,53 +50,33 @@ Notes:
 
 ## Analysis and Summarization Model Recommendations
 
-The default Hugging Face analysis model is:
+The default analysis model is `google/gemma-4-E4B-it`. For all backends, this model is run through the llama.cpp engine using GGUF quantizations, which allow the model to be split across GPU VRAM and system RAM.
 
-```python
-DEFAULT_ANALYSIS_MODEL_ID = "google/gemma-4-E4B-it"
-```
+For a native Python installation, a GGUF version of the model is downloaded automatically. For Docker runs, the images come with the necessary build tools, and the wrapper handles the GGUF cache.
 
-For one-off comparisons, override it without editing source:
-
-```bash
-TRANSCRIBER_ANALYSIS_MODEL="mistralai/Mistral-7B-Instruct-v0.3" \
-	python transcribe.py meeting_20260527_114300.wav
-```
-
-This is the current default for CPU, NVIDIA CUDA, and Intel paths because it provides excellent reasoning and instruction-following while remaining practical for local deployment.
-
-AMD ROCm Docker runs use a separate llama.cpp/GGUF backend by default. The default GGUF filename is:
-
-```text
-gemma-4-E4B-it-Q4_K_M.gguf
-```
-
-It downloads on first use into the GGUF cache used by the wrapper:
-
-```text
-~/.cache/transcriber/gguf/gemma-4-E4B-it-Q4_K_M.gguf
-```
-
-or point directly at another local GGUF file:
+To compare another local GGUF model without editing source, point to it explicitly:
 
 ```bash
 TRANSCRIBER_LLAMA_CPP_MODEL_PATH="/path/to/model.gguf" \
-	./docker-run-transcribe.sh meeting_20260527_114300.wav
+	python transcribe.py meeting_20260527_114300.wav
 ```
 
 The default download source is `ggml-org/gemma-4-E4B-it-GGUF`. If you want the same filename from a different Hugging Face GGUF repository, set `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`.
 
-The ROCm llama.cpp backend computes a conservative `n_gpu_layers` value at runtime from available VRAM, model file size, context size, configured headroom, and the default 42 Gemma 4 E4B text layers. It then leaves the remaining layers in system RAM, which is safer on consumer AMD cards than relying on Transformers device offload.
+The automatic layer split defaults to 42 model layers, matching the Gemma 4 E4B text configuration. Override `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT` only when using a different GGUF architecture.
+
+The llama.cpp context window is sized automatically to hold the current transcript prompt plus the generated report. When the transcript length is known, the window is derived from the actual transcript size; otherwise it falls back to the configured `TRANSCRIBER_MAX_TRANSCRIPT_CHARS` budget. The result is capped at the model's trained 131072-token window. Set `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE` only to pin a fixed window.
+
+Advanced llama.cpp tuning is available through `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`, `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`, `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`, `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`, `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB`, and `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`. The defaults are intended to be conservative.
 
 Transcript prompt size is capped dynamically from available RAM. For repeatable model comparisons, use a fixed cap:
 
 ```bash
 TRANSCRIBER_MAX_TRANSCRIPT_CHARS=80000 \
-	TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-7B-Instruct" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
-Recommended alternatives:
+Recommended alternatives (convert these to GGUF format for use):
 
 | Model                                  | Why Consider It                                            | Fit                                             |
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------- |
@@ -124,37 +104,22 @@ For smaller machines or CPU-heavy workflows:
 2. `microsoft/Phi-3-small-8k-instruct`
 3. `Qwen/Qwen2.5-3B-Instruct`
 
-For AMD ROCm Docker workflows, start with GGUF models instead of Hugging Face IDs:
+GGUF-specific recommendations (ready to use with llama.cpp):
 
 | GGUF Model File                         | Why Consider It                                  | Fit                                      |
 | --------------------------------------- | ------------------------------------------------ | ---------------------------------------- |
-| `gemma-4-E4B-it-Q4_K_M.gguf`            | Current ROCm default target; strong summaries through llama.cpp | Best first AMD ROCm option               |
+| `gemma-4-E4B-it-Q4_K_M.gguf`            | Current default target; strong summaries through llama.cpp | Best first option for all backends         |
 | `Qwen2.5-3B-Instruct-Q4_K_M.gguf`       | Compact and capable if Gemma is too heavy        | Good lower-resource fallback             |
 | `Qwen2.5-7B-Instruct-Q4_K_M.gguf`       | Better summaries if VRAM/RAM budget allows       | Good quality upgrade for larger systems  |
 | `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf`  | Widely used instruct model with strong summaries | Strong comparison model                  |
 | `Phi-3-mini-4k-instruct-Q4_K_M.gguf`    | Small and fast                                   | Good low-resource option                 |
-
-Useful ROCm llama.cpp tuning variables:
-
-| Variable                              | Purpose                                                   |
-| ------------------------------------- | --------------------------------------------------------- |
-| `TRANSCRIBER_LLAMA_CPP_MODEL_PATH`    | Absolute path to a GGUF file                              |
-| `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`    | Hugging Face repo used to download a missing GGUF file    |
-| `TRANSCRIBER_GGUF_CACHE_DIR`          | Directory containing the default GGUF model filename      |
-| `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`  | llama.cpp context window                                  |
-| `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`    | llama.cpp batch size                                      |
-| `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`    | Manual `n_gpu_layers` override                            |
-| `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB` | Extra VRAM headroom to reserve before offloading layers |
-| `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`    | Model layer count used by the automatic GPU/RAM split estimator |
-
-Use `TRANSCRIBER_ANALYSIS_MODEL` only for Hugging Face model IDs. Use `TRANSCRIBER_LLAMA_CPP_MODEL_PATH` for GGUF files.
 
 ## Recommended First Comparison
 
 The first smaller model worth comparing against the Gemma 4 E4B default is:
 
 ```bash
-TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-3B-Instruct" \
+TRANSCRIBER_LLAMA_CPP_MODEL_PATH="/path/to/Qwen2.5-3B-Instruct-Q4_K_M.gguf" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 
@@ -170,24 +135,11 @@ Compare outputs using the same transcript and evaluate:
 
 ## Important Caveat
 
-The Hugging Face summarization backend assumes that the model can be loaded with:
-
-```python
-AutoModelForCausalLM.from_pretrained(...)
-AutoTokenizer.from_pretrained(...)
-```
-
-and that the tokenizer supports:
-
-```python
-tokenizer.apply_chat_template(...)
-```
-
-Most modern instruct models support this, but some may need adjusted tokenizer/model arguments or prompt formatting. The AMD ROCm Docker backend does not use this loading path; it uses llama.cpp and local GGUF files instead.
+The analysis backend now uses llama.cpp and GGUF models. If you wish to use a model from Hugging Face that is not already in GGUF format, you must first convert it using the tools provided by the [llama.cpp project](https://github.com/ggerganov/llama.cpp).
 
 ## Overall Recommendation
 
-Use `google/gemma-4-E4B-it` as the CPU/NVIDIA/Intel baseline. Use `gemma-4-E4B-it-Q4_K_M.gguf` as the first AMD ROCm Docker baseline.
+Use `google/gemma-4-E4B-it` as the baseline for all backends.
 
 For better transcription, first try:
 
@@ -198,7 +150,7 @@ WHISPER_MODEL_SIZE = "small"
 For a lighter summarization comparison, first try:
 
 ```bash
-TRANSCRIBER_ANALYSIS_MODEL="Qwen/Qwen2.5-3B-Instruct" \
+TRANSCRIBER_LLAMA_CPP_MODEL_PATH="/path/to/Qwen2.5-3B-Instruct-Q4_K_M.gguf" \
 	python transcribe.py meeting_20260527_114300.wav
 ```
 

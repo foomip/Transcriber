@@ -1,6 +1,8 @@
 # ---------- Dockerfile.nvidia ----------
-# NVIDIA CUDA variant — CUDA 12.4 runtime + CUDA-enabled PyTorch.
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+# NVIDIA CUDA variant — CUDA 12.4 cuDNN devel + CUDA-enabled llama.cpp.
+# Faster-Whisper/CTranslate2 speech models need cuDNN at runtime on NVIDIA,
+# so use the cuDNN-enabled devel image instead of plain CUDA devel.
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -15,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.14 \
         python3.14-venv \
         build-essential \
+        cmake \
+        ninja-build \
+        pkg-config \
         libsndfile1 \
         ffmpeg \
         git \
@@ -45,10 +50,30 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN sed '/^torch$/d' requirements.txt > requirements_no_torch.txt && \
-    python -m pip install --no-cache-dir -r requirements_no_torch.txt && \
-    rm requirements_no_torch.txt && \
-    python -m pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+
+# The CUDA devel image ships only the unversioned stub libcuda.so, but
+# libggml-cuda.so records a DT_NEEDED of libcuda.so.1 (the versioned name).
+# Create a temporary versioned symlink so llama-cpp-python can link during the
+# image build, then remove it immediately afterwards. At runtime we want the
+# real driver library injected by the NVIDIA Container Toolkit, not the stub.
+RUN grep -v '^llama-cpp-python$' requirements.txt > requirements_no_llama.txt && \
+    python -m pip install --no-cache-dir -r requirements_no_llama.txt && \
+    rm requirements_no_llama.txt && \
+    ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 && \
+    ldconfig && \
+    CMAKE_ARGS="-DGGML_CUDA=on" \
+    FORCE_CMAKE=1 \
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python && \
+    rm -f /usr/local/lib/libcuda.so.1 && \
+    ldconfig && \
+    rm requirements_no_llama.txt && \
+    ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 && \
+    ldconfig && \
+    CMAKE_ARGS="-DGGML_CUDA=on" \
+    FORCE_CMAKE=1 \
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python && \
+    rm -f /usr/local/lib/libcuda.so.1 && \
+    ldconfig
 
 COPY . .
 USER appuser

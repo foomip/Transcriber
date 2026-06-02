@@ -1,14 +1,10 @@
 # Core transcription backend
 faster-whisper>=1.0.1
 
-# Hugging Face analysis model (meeting summarization LLM)
-# NOTE: transformers 5.2.0+ is required for the default Qwen analysis model.
-transformers>=5.2.0
+# llama.cpp analysis backend (meeting summarization LLM)
+llama-cpp-python
 huggingface-hub
-torch
-
-# Enables device_map="auto" — lets Accelerate place the analysis model automatically.
-accelerate
+nvidia-ml-py
 
 # YouTube transcript fetching (no API key required)
 youtube-transcript-api
