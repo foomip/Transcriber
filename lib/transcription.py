@@ -17,6 +17,7 @@ import ctranslate2
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment, TranscriptionInfo
 
+from lib.hardware import parse_rocm_product_name
 from lib.progress import ProgressTimer
 from lib.languages import SUPPORTED_LANGUAGES
 
@@ -103,12 +104,17 @@ def detect_device() -> tuple[str, str]:
     # AMD / ROCm check
     if os.path.exists("/dev/kfd"):
         try:
-            res = subprocess.check_output(["rocm-smi", "--showproductname"], stderr=subprocess.DEVNULL, text=True)
-            lines = res.strip().splitlines()
-            if len(lines) > 1:
-                gpu_name = lines[1].split(None, 1)[-1].strip()
+            res = subprocess.check_output(
+                ["rocm-smi", "--showproductname"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            gpu_name = parse_rocm_product_name(res)
+            if gpu_name:
                 print(f"  ℹ️  ROCm GPU detected for summarization: {gpu_name}")
             else:
+                if os.environ.get("DEBUG") == "1":
+                    print("  DEBUG: Could not parse a ROCm GPU name from rocm-smi output")
                 print("  ℹ️  ROCm GPU detected for summarization")
         except Exception as exc:
             if os.environ.get("DEBUG") == "1":

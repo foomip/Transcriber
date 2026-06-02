@@ -44,7 +44,6 @@ def test_detect_gpu_nvidia(monkeypatch):
 
 
 def test_detect_gpu_amd(monkeypatch):
-    # Mock /dev/kfd and rocm-smi
     monkeypatch.setattr(os.path, "exists", lambda path: path == "/dev/kfd")
 
     def fake_check_output(args, **kwargs):
@@ -57,6 +56,26 @@ def test_detect_gpu_amd(monkeypatch):
     kind, name = analysis._detect_gpu()
     assert kind == "rocm"
     assert name == "Navi 21"
+
+
+def test_detect_gpu_amd_parses_verbose_rocm_smi_output(monkeypatch):
+    monkeypatch.setattr(os.path, "exists", lambda path: path == "/dev/kfd")
+
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showproductname"]:
+            return """
+====================    ROCm System Management Interface    ====================
+======================================== Product Info ========================================
+GPU[0]          : Card series: Radeon RX 7800 XT
+GPU[0]          : Card model: 0x747e
+"""
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    kind, name = analysis._detect_gpu()
+    assert kind == "rocm"
+    assert name == "Radeon RX 7800 XT"
 
 
 def test_detect_gpu_cpu(monkeypatch):
@@ -116,6 +135,18 @@ def test_detect_analysis_backend_returns_llama_cpp_on_rocm(monkeypatch):
     assert backend.device_name == "Navi 21"
     assert "llama.cpp" in backend.notes[0]
     assert backend.max_new_tokens == 2048
+
+
+def test_detect_analysis_backend_preserves_rocm_kind_when_name_is_generic(monkeypatch):
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("rocm", "Radeon RX 7800 XT"))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_exists", lambda path: True)
+    monkeypatch.setattr(analysis_backend, "_amd_free_vram_bytes", lambda: 8 * analysis._GIB)
+
+    backend = analysis.detect_analysis_backend()
+
+    assert backend.name == "rocm"
+    assert backend.device_name == "Radeon RX 7800 XT"
 
 
 def test_detect_analysis_backend_returns_llama_cpp_on_cpu(monkeypatch):

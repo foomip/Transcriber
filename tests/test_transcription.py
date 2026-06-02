@@ -1,8 +1,10 @@
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 
 from lib import transcription
+from lib.hardware import parse_rocm_product_name
 
 
 class NullProgressTimer:
@@ -35,17 +37,13 @@ def test_language_helpers_normalize_lookup_and_format_languages():
 
 def test_detect_device_uses_cuda_when_ctranslate2_sees_a_cuda_gpu(monkeypatch):
     monkeypatch.setattr(transcription.ctranslate2, "get_cuda_device_count", lambda: 1)
-    
-    # Mock pynvml for the GPU name print
+
     import types
     mock_pynvml = types.SimpleNamespace(
         nvmlInit=lambda: None,
         nvmlDeviceGetHandleByIndex=lambda _: 0,
         nvmlDeviceGetName=lambda _: "Test GPU",
     )
-    monkeypatch.setitem(sys.modules, "pynvml", mock_pynvml) if "sys" in globals() else None
-    # Since we are in a test, we might need to import sys
-    import sys
     monkeypatch.setitem(sys.modules, "pynvml", mock_pynvml)
 
     assert transcription.detect_device() == ("cuda", "float16")
@@ -54,16 +52,26 @@ def test_detect_device_uses_cuda_when_ctranslate2_sees_a_cuda_gpu(monkeypatch):
 def test_detect_device_uses_cpu_for_rocm_faster_whisper_fallback(monkeypatch):
     monkeypatch.setattr(transcription.ctranslate2, "get_cuda_device_count", lambda: 0)
     monkeypatch.setattr(os.path, "exists", lambda path: path == "/dev/kfd")
-    
-    # Mock rocm-smi
-    import subprocess
+
     def fake_check_output(args, **kwargs):
         if args == ["rocm-smi", "--showproductname"]:
             return "GPU  Product Name\n0    ROCm GPU"
         raise FileNotFoundError()
+
     monkeypatch.setattr(subprocess, "check_output", fake_check_output)
 
     assert transcription.detect_device() == ("cpu", "int8")
+
+
+def test_parse_rocm_product_name_supports_verbose_rocm_smi_output():
+    output = """
+====================    ROCm System Management Interface    ====================
+======================================== Product Info ========================================
+GPU[0]          : Card series: Radeon RX 7800 XT
+GPU[0]          : Card model: 0x747e
+"""
+
+    assert parse_rocm_product_name(output) == "Radeon RX 7800 XT"
 
 
 def test_detect_device_uses_cpu_when_no_gpu_is_available(monkeypatch):

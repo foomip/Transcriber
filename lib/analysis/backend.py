@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .utils import AnalysisModelError
+from lib.hardware import parse_rocm_product_name
 from lib.progress import ProgressTimer
 
 # ---------------------------------------------------------------------------
@@ -172,19 +173,18 @@ def _detect_gpu() -> tuple[str, str]:
     # AMD check
     if os.path.exists("/dev/kfd"):
         try:
-            # Try rocm-smi
-            res = subprocess.check_output(["rocm-smi", "--showproductname"], stderr=subprocess.DEVNULL, text=True)
-            # Example output:
-            # GPU  Product Name
-            # 0    Navi 21
-            lines = res.strip().splitlines()
-            if len(lines) > 1:
-                name = lines[1].split(None, 1)[-1].strip()
+            res = subprocess.check_output(
+                ["rocm-smi", "--showproductname"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            if name := parse_rocm_product_name(res):
                 return "rocm", name
-        except (subprocess.CalledProcessError, FileNotFoundError, IndexError) as exc:
+            if os.environ.get("DEBUG") == "1":
+                print("  DEBUG: Could not parse a ROCm GPU name from rocm-smi output")
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             if os.environ.get("DEBUG") == "1":
                 print(f"  DEBUG: ROCm SMI failed: {exc}")
-            pass
         return "rocm", "AMD GPU"
 
     return "cpu", "CPU"
@@ -202,10 +202,10 @@ def _nvidia_free_vram_bytes() -> int | None:
 
 
 def _amd_free_vram_bytes() -> int | None:
+    # Primary method: use rocm-smi if available
     try:
-        # Parse rocm-smi --showmeminfo vram
         res = subprocess.check_output(["rocm-smi", "--showmeminfo", "vram"], stderr=subprocess.DEVNULL, text=True)
-        # Example output:
+        # Expected format:
         # GPU  VRAM Total  VRAM Used  VRAM %
         # 0    12288MB    1024MB     8%
         lines = res.strip().splitlines()
@@ -215,6 +215,18 @@ def _amd_free_vram_bytes() -> int | None:
             used_mb = int(parts[2].replace("MB", ""))
             return (total_mb - used_mb) * 1024 * 1024
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError, IndexError):
+        pass
+    # Fallback: read sysfs entries if rocm-smi is not present
+    try:
+        total_path = "/sys/class/drm/card0/device/mem_info_vram_total"
+        used_path = "/sys/class/drm/card0/device/mem_info_vram_used"
+        with open(total_path, encoding="utf-8") as f:
+            total_kb = int(f.read().strip())
+        with open(used_path, encoding="utf-8") as f:
+            used_kb = int(f.read().strip())
+        # Values are in kilobytes
+        return (total_kb - used_kb) * 1024
+    except Exception:
         pass
     return None
 
@@ -415,13 +427,13 @@ def _llama_cpp_model_kwargs(model_path: str) -> tuple[dict[str, Any], tuple[str,
 # Per-backend configuration builders
 # ---------------------------------------------------------------------------
 
-def _llama_cpp_analysis_backend(device_name: str) -> AnalysisBackend:
+def _llama_cpp_analysis_backend(kind: str, device_name: str) -> AnalysisBackend:
     model_path = _llama_cpp_model_path()
     if _llama_cpp_is_available():
         model_path = _ensure_llama_cpp_model(model_path)
     model_kwargs, model_notes = _llama_cpp_model_kwargs(model_path)
     return AnalysisBackend(
-        name="rocm" if "AMD" in device_name or "Navi" in device_name else "cuda" if "NVIDIA" in device_name or "RTX" in device_name else "cpu",
+        name=kind,
         device_name=device_name,
         model_id=model_path,
         model_kwargs=model_kwargs,
@@ -444,13 +456,13 @@ def detect_analysis_backend() -> AnalysisBackend:
 
     if kind == "cpu":
         # In a llama.cpp-only world, CPU is just llama.cpp with 0 layers on GPU.
-        return _llama_cpp_analysis_backend(device_name)
+        return _llama_cpp_analysis_backend(kind, device_name)
 
     if backend_preference == LLAMA_CPP_BACKEND_NAME or backend_preference == "auto":
-        return _llama_cpp_analysis_backend(device_name)
+        return _llama_cpp_analysis_backend(kind, device_name)
 
     # Since we are removing Transformers, any other preference just falls back to llama.cpp
-    return _llama_cpp_analysis_backend(device_name)
+    return _llama_cpp_analysis_backend(kind, device_name)
 
 
 def _display_model_name(backend: AnalysisBackend) -> str:

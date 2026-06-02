@@ -53,19 +53,17 @@ COPY requirements.txt .
 
 # The CUDA devel image ships only the unversioned stub libcuda.so, but
 # libggml-cuda.so records a DT_NEEDED of libcuda.so.1 (the versioned name).
-# The compile-time linker resolves DT_NEEDED by exact filename, so it cannot
-# satisfy this dependency from the stubs directory even when -L points there.
-# Placing a versioned symlink in /usr/local/lib (a standard ld search path)
-# makes every linker invocation in the llama-cpp-python build succeed without
-# any -L flags.  The real driver library is injected by the NVIDIA Container
-# Toolkit at runtime and the stub is never loaded in a running container.
-RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 && \
-    ldconfig
-
+# Create a temporary versioned symlink so llama-cpp-python can link during the
+# image build, then remove it immediately afterwards. At runtime we want the
+# real driver library injected by the NVIDIA Container Toolkit, not the stub.
 RUN python -m pip install --no-cache-dir -r requirements.txt && \
+    ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 && \
+    ldconfig && \
     CMAKE_ARGS="-DGGML_CUDA=on" \
     FORCE_CMAKE=1 \
-    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python && \
+    rm -f /usr/local/lib/libcuda.so.1 && \
+    ldconfig
 
 COPY . .
 USER appuser
