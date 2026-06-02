@@ -40,8 +40,7 @@ WORKDIR /app
 
 # Install Python dependencies and build the CPU version of llama-cpp-python
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt && \
-    python -m pip install --no-cache-dir llama-cpp-python
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
