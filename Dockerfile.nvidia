@@ -56,7 +56,9 @@ COPY requirements.txt .
 # Create a temporary versioned symlink so llama-cpp-python can link during the
 # image build, then remove it immediately afterwards. At runtime we want the
 # real driver library injected by the NVIDIA Container Toolkit, not the stub.
-RUN python -m pip install --no-cache-dir -r requirements.txt && \
+RUN grep -v '^llama-cpp-python\b' requirements.txt > requirements_no_llama.txt && \
+    python -m pip install --no-cache-dir -r requirements_no_llama.txt && \
+    rm requirements_no_llama.txt && \
     ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 && \
     ldconfig && \
     CMAKE_ARGS="-DGGML_CUDA=on" \

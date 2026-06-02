@@ -690,7 +690,7 @@ If you are using Docker, verify that the matching image is being used and that D
 ./docker-run-transcribe.sh --help-docker
 
 docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import llama_cpp; print('llama_cpp ok')"
-docker run --rm --entrypoint python transcriber:rocm-llama -c "import llama_cpp; print('llama_cpp ok')"
+docker run --rm --entrypoint python transcriber:rocm -c "import llama_cpp; print('llama_cpp ok')"
 ```
 
 **AMD ROCm VRAM limits**

@@ -77,9 +77,16 @@ def detect_device() -> tuple[str, str]:
     if cuda_count > 0:
         try:
             import pynvml
+
             pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            gpu_name = pynvml.nvmlDeviceGetName(handle)
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                gpu_name = pynvml.nvmlDeviceGetName(handle)
+            finally:
+                try:
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    pass
             if isinstance(gpu_name, bytes):
                 gpu_name = gpu_name.decode("utf-8")
             print(f"  ✅ GPU detected: {gpu_name}")
