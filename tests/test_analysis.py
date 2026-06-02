@@ -97,7 +97,7 @@ def test_nvidia_free_vram_bytes(monkeypatch):
 
 
 def test_amd_free_vram_bytes(monkeypatch):
-    monkeypatch.setattr(os.path, "exists", lambda path: True) # Not used by this func but good practice
+    monkeypatch.setattr(os.path, "exists", lambda path: True)  # Not used by this func but good practice
 
     def fake_check_output(args, **kwargs):
         if args == ["rocm-smi", "--showmeminfo", "vram"]:
@@ -107,6 +107,56 @@ def test_amd_free_vram_bytes(monkeypatch):
     monkeypatch.setattr(subprocess, "check_output", fake_check_output)
 
     assert analysis._amd_free_vram_bytes() == (12288 - 2288) * 1024 * 1024
+
+
+
+def test_amd_free_vram_bytes_parses_verbose_byte_output(monkeypatch):
+    def fake_check_output(args, **kwargs):
+        if args == ["rocm-smi", "--showmeminfo", "vram"]:
+            return """
+====================    ROCm System Management Interface    ====================
+================================ Memory Usage (Bytes) ================================
+GPU[0]          : VRAM Total Memory (B): 17163091968
+GPU[0]          : VRAM Total Used Memory (B): 1073741824
+================================================================================
+"""
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    assert analysis._amd_free_vram_bytes() == 16089350144
+
+
+
+def test_amd_free_vram_bytes_uses_amdsmi_when_available(monkeypatch):
+    fake_amdsmi = types.SimpleNamespace(
+        amdsmi_init=MagicMock(),
+        amdsmi_get_processor_handles=lambda: ["gpu0"],
+        amdsmi_get_gpu_vram_usage=lambda handle: {
+            "vram_total": 16 * analysis._GIB,
+            "vram_used": 2 * analysis._GIB,
+        },
+        amdsmi_shut_down=MagicMock(),
+    )
+    monkeypatch.setitem(sys.modules, "amdsmi", fake_amdsmi)
+
+    assert analysis._amd_free_vram_bytes() == 14 * analysis._GIB
+    fake_amdsmi.amdsmi_init.assert_called_once_with()
+    fake_amdsmi.amdsmi_shut_down.assert_called_once_with()
+
+
+
+def test_amd_free_vram_bytes_falls_back_to_sysfs_bytes(tmp_path, monkeypatch):
+    sysfs_dir = tmp_path / "card1" / "device"
+    sysfs_dir.mkdir(parents=True)
+    (sysfs_dir / "mem_info_vram_total").write_text(str(16 * analysis._GIB), encoding="utf-8")
+    (sysfs_dir / "mem_info_vram_used").write_text(str(2 * analysis._GIB), encoding="utf-8")
+
+    monkeypatch.delitem(sys.modules, "amdsmi", raising=False)
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(analysis_backend.glob, "glob", lambda pattern: [str(sysfs_dir / "mem_info_vram_total")])
+
+    assert analysis._amd_free_vram_bytes() == 14 * analysis._GIB
 
 
 def test_detect_analysis_backend_returns_llama_cpp_on_cuda(monkeypatch):
@@ -201,6 +251,24 @@ def test_llama_cpp_gpu_layers_uses_safe_vram_budget(tmp_path, monkeypatch):
 
     monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
     monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 6 * analysis._GIB)
+
+    gpu_layers, notes = analysis._llama_cpp_gpu_layers(str(model_path))
+
+    assert gpu_layers == 11
+    assert "11/32" in notes[0]
+
+
+
+def test_llama_cpp_gpu_layers_reports_rocm_offload_like_cuda(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * 8 * analysis._GIB)
+    monkeypatch.delenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, raising=False)
+    monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
+    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
+
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("rocm", "AMD Radeon RX 6800"))
+    monkeypatch.setattr(analysis_backend, "_amd_free_vram_bytes", lambda: 6 * analysis._GIB)
 
     gpu_layers, notes = analysis._llama_cpp_gpu_layers(str(model_path))
 

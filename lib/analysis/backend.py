@@ -8,9 +8,13 @@ Responsibilities:
     - Expose detect_analysis_backend() as the single entry point for callers
 """
 
+import csv
+import glob
+import importlib
 import importlib.util
 import math
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -201,33 +205,149 @@ def _nvidia_free_vram_bytes() -> int | None:
         return None
 
 
+_MEMORY_TOKEN_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([KMGT]i?B|B)", re.IGNORECASE)
+
+
+def _size_token_to_bytes(token: str) -> int | None:
+    match = _MEMORY_TOKEN_RE.search(token.strip())
+    if not match:
+        return None
+
+    value = float(match.group(1))
+    unit = match.group(2).upper()
+    multipliers = {
+        "B": 1,
+        "KB": 1024,
+        "MB": 1024 ** 2,
+        "GB": 1024 ** 3,
+        "TB": 1024 ** 4,
+        "KIB": 1024,
+        "MIB": 1024 ** 2,
+        "GIB": 1024 ** 3,
+        "TIB": 1024 ** 4,
+    }
+    multiplier = multipliers.get(unit)
+    if multiplier is None:
+        return None
+    return int(value * multiplier)
+
+
+def _parse_amd_vram_bytes_from_rocm_smi(output: str) -> int | None:
+    total_bytes: int | None = None
+    used_bytes: int | None = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        lower_line = line.casefold()
+        if "vram total memory (b):" in lower_line:
+            digits = re.sub(r"[^0-9]", "", line.rsplit(":", 1)[-1])
+            if digits:
+                total_bytes = int(digits)
+        elif "vram total used memory (b):" in lower_line:
+            digits = re.sub(r"[^0-9]", "", line.rsplit(":", 1)[-1])
+            if digits:
+                used_bytes = int(digits)
+
+    if total_bytes is not None and used_bytes is not None:
+        return max(0, total_bytes - used_bytes)
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    csv_start = next((index for index, line in enumerate(lines) if "," in line), None)
+    if csv_start is not None:
+        try:
+            reader = csv.DictReader(lines[csv_start:])
+            first_row = next(reader, None)
+            if first_row:
+                for total_key, used_key in (
+                    ("VRAM Total Memory (B)", "VRAM Total Used Memory (B)"),
+                    ("VRAM Total", "VRAM Used"),
+                ):
+                    total_value = first_row.get(total_key)
+                    used_value = first_row.get(used_key)
+                    if total_value and used_value:
+                        total_bytes = int(str(total_value).replace(",", "").strip())
+                        used_bytes = int(str(used_value).replace(",", "").strip())
+                        return max(0, total_bytes - used_bytes)
+        except (csv.Error, ValueError):
+            pass
+
+    for line in lines:
+        if not re.match(r"^(?:\d+|GPU\[\d+\])\b", line, re.IGNORECASE):
+            continue
+        sizes = [_size_token_to_bytes(match.group(0)) for match in _MEMORY_TOKEN_RE.finditer(line)]
+        sizes = [size for size in sizes if size is not None]
+        if len(sizes) >= 2:
+            return max(0, sizes[0] - sizes[1])
+
+    return None
+
+
+def _sysfs_memory_value_to_bytes(value: int) -> int:
+    # Recent AMD kernels expose mem_info_vram_* in bytes. Older notes online
+    # sometimes describe KiB values, so keep a small-value heuristic fallback.
+    return value * 1024 if value < _GIB else value
+
+
 def _amd_free_vram_bytes() -> int | None:
-    # Primary method: use rocm-smi if available
     try:
-        res = subprocess.check_output(["rocm-smi", "--showmeminfo", "vram"], stderr=subprocess.DEVNULL, text=True)
-        # Expected format:
-        # GPU  VRAM Total  VRAM Used  VRAM %
-        # 0    12288MB    1024MB     8%
-        lines = res.strip().splitlines()
-        if len(lines) > 1:
-            parts = lines[1].split()
-            total_mb = int(parts[1].replace("MB", ""))
-            used_mb = int(parts[2].replace("MB", ""))
-            return (total_mb - used_mb) * 1024 * 1024
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError, IndexError):
+        amdsmi = importlib.import_module("amdsmi")
+        amdsmi.amdsmi_init()
+        try:
+            handles = amdsmi.amdsmi_get_processor_handles()
+            if handles:
+                usage = amdsmi.amdsmi_get_gpu_vram_usage(handles[0])
+                total_bytes = int(usage["vram_total"])
+                used_bytes = int(usage["vram_used"])
+                return max(0, total_bytes - used_bytes)
+        finally:
+            shutdown = getattr(amdsmi, "amdsmi_shut_down", None) or getattr(
+                amdsmi, "amdsmi_shutdown", None
+            )
+            if callable(shutdown):
+                shutdown()
+    except (ImportError, Exception):
         pass
-    # Fallback: read sysfs entries if rocm-smi is not present
+
     try:
-        total_path = "/sys/class/drm/card0/device/mem_info_vram_total"
-        used_path = "/sys/class/drm/card0/device/mem_info_vram_used"
-        with open(total_path, encoding="utf-8") as f:
-            total_kb = int(f.read().strip())
-        with open(used_path, encoding="utf-8") as f:
-            used_kb = int(f.read().strip())
-        # Values are in kilobytes
-        return (total_kb - used_kb) * 1024
-    except Exception:
+        res = subprocess.check_output(
+            ["rocm-smi", "--showmeminfo", "vram", "--csv"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        free_bytes = _parse_amd_vram_bytes_from_rocm_smi(res)
+        if free_bytes is not None:
+            return free_bytes
+    except (subprocess.CalledProcessError, FileNotFoundError):
         pass
+
+    try:
+        res = subprocess.check_output(
+            ["rocm-smi", "--showmeminfo", "vram"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        free_bytes = _parse_amd_vram_bytes_from_rocm_smi(res)
+        if free_bytes is not None:
+            return free_bytes
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    for total_path in sorted(glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")):
+        used_path = total_path.replace("mem_info_vram_total", "mem_info_vram_used")
+        try:
+            with open(total_path, encoding="utf-8") as f:
+                total_value = int(f.read().strip())
+            with open(used_path, encoding="utf-8") as f:
+                used_value = int(f.read().strip())
+            total_bytes = _sysfs_memory_value_to_bytes(total_value)
+            used_bytes = _sysfs_memory_value_to_bytes(used_value)
+            return max(0, total_bytes - used_bytes)
+        except (OSError, ValueError):
+            continue
+
     return None
 
 
