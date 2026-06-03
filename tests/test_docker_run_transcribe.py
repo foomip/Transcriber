@@ -211,7 +211,8 @@ def test_rocm_backend_adds_device_mounts_and_deduplicated_groups(tmp_path):
     assert build_call[-1] == str(REPO_ROOT)
 
     run_call = _call_for_subcommand(calls, "run")
-    assert f"HSA_ENABLE_SDMA=0" in run_call
+    assert "HSA_ENABLE_SDMA=0" in run_call
+    assert "CT2_CUDA_ALLOCATOR=cub_caching" in run_call
     device_values = _values_after_flag(run_call, "--device")
     assert str(dev_kfd) in device_values
     assert str(dri_dir) in device_values
@@ -223,3 +224,26 @@ def test_rocm_backend_adds_device_mounts_and_deduplicated_groups(tmp_path):
 
     image_index = run_call.index("transcriber:rocm")
     assert run_call[image_index + 1 :] == [f"/input/{audio_path.name}"]
+
+
+def test_rocm_backend_preserves_ct2_allocator_override_from_environment(tmp_path):
+    audio_path = tmp_path / "meeting.wav"
+    audio_path.write_bytes(b"RIFF")
+    dev_kfd = tmp_path / "kfd"
+    dev_kfd.write_text("", encoding="utf-8")
+
+    result, calls = _run_wrapper(
+        tmp_path,
+        ["--image", "transcriber:rocm", str(audio_path)],
+        extra_env={
+            "TRANSCRIBER_DEV_KFD_PATH": str(dev_kfd),
+            "TRANSCRIBER_DRI_DIR": str(tmp_path / "missing-dri"),
+            "CT2_CUDA_ALLOCATOR": "cuda_malloc_async",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    run_call = _call_for_subcommand(calls, "run")
+    assert "CT2_CUDA_ALLOCATOR=cuda_malloc_async" in run_call
+    assert "CT2_CUDA_ALLOCATOR=cub_caching" not in run_call
