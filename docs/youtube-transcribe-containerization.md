@@ -18,7 +18,7 @@ run inside the same Docker containers (`transcriber:cpu`, `transcriber:nvidia`,
 ## 2. Architecture Overview
 
 ```
-                    ┌──────────────────────────────────┐
+                    ┌───────────────────────────────────┐
                     │       lib/docker-common.sh        │
                     │  (Shared shell library — sourced) │
                     │                                   │
@@ -39,16 +39,16 @@ run inside the same Docker containers (`transcriber:cpu`, `transcriber:nvidia`,
                     │   args to           │  │   summarize.py      │
                     │   transcribe.py     │  │ • Passes URL & lang │
                     └──────────┬──────────┘  └──────────┬──────────┘
-                               │                         │
-                               │  docker run             │  docker run --entrypoint python
-                               │                         │
-                    ┌──────────▼─────────────────────────▼──────────┐
+                               │                        │
+                               │  docker run            │  docker run --entrypoint python
+                               │                        │
+                    ┌──────────▼────────────────────────▼───────────┐
                     │            target Docker image                │
                     │  transcriber:cpu / :nvidia / :rocm / :intel   │
-                    │                                              │
+                    │                                               │
                     │  Volume mounts: output/, HF cache, GGUF cache │
                     │  GPU device passthrough (if applicable)       │
-                    └──────────────────────────────────────────────┘
+                    └───────────────────────────────────────────────┘
 ```
 
 ### 2.1 Key Design Decisions
@@ -298,14 +298,48 @@ select_backend():
 | `$HF_CACHE_DIR` | `/cache/huggingface` | HuggingFace model cache (Whisper) |
 | `$GGUF_CACHE_DIR` | `/cache/transcriber/gguf` | GGUF model cache (llama.cpp) |
 
-## 8. Files Changed / Created
+## 8. Incremental Implementation Steps
 
-| File | Action | Details |
-|---|---|---|
-| `lib/docker-common.sh` | CREATE | Shared shell library with all common functions |
-| `docker-run-transcribe.sh` | EDIT | Source common lib, remove extracted functions, keep wrapper-specific logic |
-| `docker-run-youtube.sh` | CREATE | New wrapper: sources common lib, overrides entrypoint |
-| `tests/test_docker_run_youtube.py` | CREATE | Tests for the new YouTube wrapper |
+To minimize risk, the refactor is split into small, testable increments. Every step must preserve existing functionality.
+
+### Step 1: Create `lib/docker-common.sh` (Stateless Utilities)
+- Create `lib/docker-common.sh` with all pure, stateless utility functions (die, is_truthy, has_nvidia, etc.).
+- Include `BASE_IMAGE` and default path variables (`DEV_KFD_PATH`, etc.).
+- **No array mutations** in this step.
+- **Verification**: `shellcheck lib/docker-common.sh` and basic smoke test via `source`.
+
+### Step 2: Source common lib in transcribe wrapper, remove duplicates
+- Edit `docker-run-transcribe.sh` to source `lib/docker-common.sh`.
+- Remove the local copies of the functions now provided by the lib.
+- Keep all local array logic and the backend case statement.
+- **Verification**: `whisper_env/bin/python -m pytest tests/test_docker_run_transcribe.py -v`.
+
+### Step 3: Move array-mutating functions into common lib
+- Move `add_runtime_group`, `add_device_group`, and `pass_env_if_set` to `lib/docker-common.sh`.
+- These functions still reference the original array names (`run_flags`, `runtime_group_ids`).
+- Remove local definitions from `docker-run-transcribe.sh`.
+- **Verification**: `whisper_env/bin/python -m pytest tests/test_docker_run_transcribe.py -v`.
+
+### Step 4: Rename arrays + introduce setup/print helpers
+- In `lib/docker-common.sh`, rename arrays to `COMMON_RUN_FLAGS` and `RUNTIME_GROUP_IDS`.
+- Add `setup_common_run_flags()` (populates common flags and env vars) and `print_run_header()`.
+- Update `docker-run-transcribe.sh` to use the new array names and the setup helper.
+- **Verification**: Update tests if necessary; `whisper_env/bin/python -m pytest tests/test_docker_run_transcribe.py -v`.
+
+### Step 5: Consolidate `apply_backend_device_flags` into common lib
+- Move the backend case statement and group-add loop into `lib/docker-common.sh` as `apply_backend_device_flags()`.
+- Update `docker-run-transcribe.sh` to call this function.
+- **Verification**: `whisper_env/bin/python -m pytest tests/test_docker_run_transcribe.py -v`.
+
+### Step 6: Create `docker-run-youtube.sh`
+- Create the new wrapper script sourcing `lib/docker-common.sh`.
+- Implement YouTube-specific URL validation and the `--entrypoint python` override.
+- **Verification**: Manual smoke test with `TRANSCRIBER_DOCKER_BIN=echo`.
+
+### Step 7: Create `tests/test_docker_run_youtube.py`
+- Implement a full test suite mirroring the transcribe wrapper tests.
+- Verify GPU detection, image building, and correct `docker run` arguments.
+- **Verification**: `whisper_env/bin/python -m pytest tests/ -v`.
 
 ## 9. Tests — `tests/test_docker_run_youtube.py`
 
@@ -362,15 +396,3 @@ If a regression is discovered after deployment:
    git rm lib/docker-common.sh      # if it was introduced in the same commit
    git rm docker-run-youtube.sh     # if it was introduced in the same commit
    ```
-
-## 11. Verification
-
-| Check | Command |
-|---|---|
-| Docker build succeeds for CPU | `docker build -f Dockerfile.cpu -t transcriber:cpu .` |
-| Docker build succeeds for NVIDIA | `docker build -f Dockerfile.nvidia -t transcriber:nvidia .` |
-| Transcribe wrapper runs (no audio) | `./docker-run-transcribe.sh --help-docker` |
-| YouTube wrapper runs (no URL) | `./docker-run-youtube.sh --help-docker` |
-| YouTube wrapper with mock URL | `./docker-run-youtube.sh --force-cpu dQw4w9WgXcQ` |
-| Existing transcribe tests pass | `whisper_env/bin/python -m pytest tests/test_docker_run_transcribe.py -v` |
-| New YouTube tests pass | `whisper_env/bin/python -m pytest tests/test_docker_run_youtube.py -v` |
