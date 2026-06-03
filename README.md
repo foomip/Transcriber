@@ -302,7 +302,7 @@ Then run it against a recorded WAV file:
 
 The wrapper automatically prefers backends in this order: **NVIDIA → ROCm → Intel → CPU**.
 
-For ROCm runs, the wrapper selects `transcriber:rocm`, passes `/dev/kfd`, `/dev/dri`, the required device owner groups, and `HSA_ENABLE_SDMA=0`, then mounts a GGUF cache at `/cache/transcriber/gguf`. The llama.cpp backend estimates a safe `n_gpu_layers` value from available ROCm VRAM and leaves the rest of the model in system RAM.
+For ROCm runs, the wrapper selects `transcriber:rocm`, passes `/dev/kfd`, `/dev/dri`, the required device owner groups, sets `HSA_ENABLE_SDMA=0`, and defaults `CT2_CUDA_ALLOCATOR=cub_caching` to avoid known RDNA2 CTranslate2 memory-fault crashes during Whisper model loading. It then mounts a GGUF cache at `/cache/transcriber/gguf`. The llama.cpp backend estimates a safe `n_gpu_layers` value from available ROCm VRAM and leaves the rest of the model in system RAM.
 
 If your AMD GPU has limited VRAM, force the CPU Docker image instead. The first two overrides below do that.
 
@@ -710,7 +710,7 @@ export CT2_CUDA_ALLOCATOR=cub_caching
 python transcribe.py <audio.wav>
 ```
 
-Add the export to your `.envrc` to make it permanent for the project. The Docker wrapper (`docker-run-transcribe.sh`) passes this variable through automatically when it is set in the host environment.
+Add the export to your `.envrc` to make it permanent for native runs. The Docker wrapper (`docker-run-transcribe.sh`) now defaults this variable to `cub_caching` on ROCm runs and still lets you override it explicitly from the host environment when needed.
 
 For analysis summarisation, confirm your hardware is detected by the llama.cpp backend:
 
