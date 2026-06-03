@@ -227,6 +227,7 @@ def test_detect_analysis_backend_sizes_context_from_actual_transcript(tmp_path, 
     monkeypatch.setattr(analysis_backend, "_llama_cpp_model_path", lambda: str(model_path))
     monkeypatch.setattr(analysis_backend, "_ensure_llama_cpp_model", lambda path: path)
     monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 12 * analysis._GIB)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_gpu_offload_supported", lambda: True)
 
     backend = analysis.detect_analysis_backend(transcript_chars=12_000)
 

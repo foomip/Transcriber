@@ -138,9 +138,11 @@ def _generate_report_with_llama_cpp(
     transcript_body: str,
     meta: dict[str, str],
 ) -> str:
+    gpu_layers = backend.model_kwargs.get("n_gpu_layers", 0)
+    backend_label = "GPU" if gpu_layers > 0 else "CPU"
     with ProgressTimer(
         "  Loading llama.cpp analysis model...",
-        done_message=f"Model ready on {backend.name.upper()}",
+        done_message=f"Model ready on {backend_label}",
     ):
         model = _load_llama_cpp_model(backend)
 

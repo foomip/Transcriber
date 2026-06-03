@@ -9,6 +9,7 @@ Responsibilities:
 """
 
 import csv
+import ctypes
 import glob
 import importlib
 import importlib.util
@@ -467,6 +468,29 @@ def _llama_cpp_layer_count() -> int:
     return _positive_int_env(LLAMA_CPP_LAYER_COUNT_ENV) or DEFAULT_LLAMA_CPP_LAYER_COUNT
 
 
+def _llama_cpp_gpu_offload_supported() -> bool:
+    """Return True when the installed llama-cpp-python was compiled with GPU support.
+
+    This probes the underlying C shared library, not the Python wrapper.  It is
+    the definitive check for whether ``n_gpu_layers`` will actually be honoured.
+
+    Returns False when llama-cpp-python is not installed at all (callers should
+    already have checked ``_llama_cpp_is_available()`` before calling this).
+    """
+    try:
+        llama_cpp_module = importlib.import_module("llama_cpp")
+    except ImportError:
+        return False
+
+    try:
+        c_lib = llama_cpp_module.llama_cpp
+        fn = c_lib.llama_supports_gpu_offload
+        fn.restype = ctypes.c_bool
+        return bool(fn())
+    except Exception:
+        return False
+
+
 def _llama_cpp_gpu_layers(
     model_path: str,
     transcript_chars: int | None = None,
@@ -524,6 +548,16 @@ def _llama_cpp_model_kwargs(
     transcript_chars: int | None = None,
 ) -> tuple[dict[str, Any], tuple[str, ...]]:
     gpu_layers, notes = _llama_cpp_gpu_layers(model_path, transcript_chars)
+
+    # If GPU layers were computed but llama-cpp-python has no GPU support,
+    # force them to 0 so the caller can detect the mismatch and warn the user.
+    if gpu_layers > 0 and _llama_cpp_is_available() and not _llama_cpp_gpu_offload_supported():
+        notes = notes + (
+            "⚠️  llama-cpp-python was installed without GPU support; "
+            "inference will run on CPU",
+        )
+        gpu_layers = 0
+
     model_kwargs: dict[str, Any] = {
         "model_path": model_path,
         "n_ctx": _llama_cpp_context_size(transcript_chars),

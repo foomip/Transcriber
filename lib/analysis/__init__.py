@@ -89,19 +89,20 @@ def generate_summaries(
     print(f"\n🤖 Loading {_display_model_name(backend)}...")
     print("   (Missing default GGUF files download to the local GGUF cache.)\n")
 
-    if backend.name == "rocm":
-        print(f"  ✅ ROCm GPU detected for summarization: {backend.device_name}")
-        for note in backend.notes:
-            print(f"  ℹ️  {note}")
-    elif backend.name == "cuda":
+    gpu_layers = backend.model_kwargs.get("n_gpu_layers", 0)
+    if backend.name == "cuda" and gpu_layers > 0:
         print(f"  ✅ CUDA GPU detected for summarization: {backend.device_name}")
-        for note in backend.notes:
-            print(f"  ℹ️  {note}")
+    elif backend.name == "rocm" and gpu_layers > 0:
+        print(f"  ✅ ROCm GPU detected for summarization: {backend.device_name}")
     else:
-        print("  ℹ️  Using CPU for summarization")
-        for note in backend.notes:
-            icon = "⚠️ " if "lacks" in note else "ℹ️ "
-            print(f"  {icon} {note}")
+        # GPU detected but llama.cpp has no offload support, or pure CPU
+        if backend.name in ("cuda", "rocm"):
+            print(f"  ⚠️  GPU detected ({backend.device_name}) but llama-cpp-python lacks GPU support — using CPU")
+        else:
+            print("  ℹ️  Using CPU for summarization")
+    for note in backend.notes:
+        icon = "⚠️ " if "⚠️" in note or "lacks" in note else "ℹ️ "
+        print(f"  {icon} {note}")
 
     generated_report = _generate_report_with_llama_cpp(backend, transcript_body, meta)
 
