@@ -13,33 +13,36 @@ if TYPE_CHECKING:
     from .backend import AnalysisBackend
 
 ANALYSIS_SYSTEM_PROMPT = (
-    "You are an expert meeting analyst. Analyze the transcript carefully "
-    "and provide clear, accurate information based only on the transcript. "
-    "Do not invent facts, names, dates, events, decisions, or background details. "
-    "If the transcript does not contain information for a requested section, say so explicitly."
+    "You are an expert meeting analyst. Analyze the transcript carefully and extract every detail that matters for decision-making, project direction, or follow-up action.\n\n"
+    "- Capture specific numbers, dates, deadlines, and dependencies wherever they appear.\n"
+    "- Note trade-offs discussed, risks identified, blockers raised, and open questions left unresolved.\n"
+    "- Distinguish clearly between what was decided versus what is still being debated or deferred.\n"
+    "- When multiple speakers contribute to a point, synthesize the consensus (or disagreement).\n\n"
+    "IMPORTANT: This transcript has no speaker diarization — it is hard to tell who said what. Only attribute a statement to a specific person if the transcript makes it unambiguous (e.g., someone introduces themselves, or explicitly says 'I will do X'). Otherwise, describe the content without naming who said it.\n\n"
+    "Use ONLY facts present in the transcript. Do not invent names, dates, events, decisions, background details, or external context. If the transcript does not contain information for a requested section, say so explicitly."
 )
 
 # Each tuple: (markdown heading, analysis instruction)
 SUMMARY_TASKS: list[tuple[str, str]] = [
     (
         "## Executive Summary",
-        "Provide a brief executive summary (2-3 sentences) of the key outcomes and decisions from this transcript.",
-    ),
-    (
-        "## Detailed Summary",
-        "Provide a detailed summary of the transcript, covering all major topics, discussions, and outcomes in paragraph form.",
+        "Write 3-5 sentences capturing the key outcomes, decisions, and strategic implications of this meeting. Focus on what was resolved or advanced, not just what was discussed.",
     ),
     (
         "## Action Items",
-        "List the specific action items that were assigned during this meeting. Include who is responsible for each item when mentioned.",
+        "List every specific action item assigned during this meeting. For each: who owns it if clear, what exactly needs to be done, any deadline given, and the context/reason for the action. Note that speaker diarization was not used so ownership may be uncertain — describe the task itself even when the owner is unclear. If no action items were explicitly stated, write that none were assigned.",
     ),
     (
         "## Key Decisions",
-        "List the key decisions that were made during this meeting. Focus on concrete decisions and outcomes.",
+        "List every concrete decision made during this meeting. For each: state the decision clearly, include relevant specifics (numbers, dates, scope), and note any conditions or dependencies attached to it. If no decisions were explicitly stated, write that none were made.",
     ),
     (
-        "## Topics Discussed",
-        "List the main topics and subjects that were discussed in this meeting.",
+        "## Risks & Open Questions",
+        "List risks, blockers, concerns, or unresolved questions raised during this meeting. For each: describe the issue specifically and any proposed mitigations or next steps discussed. Note that speaker diarization was not used — attribute to a person only if clearly indicated in the transcript. If none were raised, write that none were identified.",
+    ),
+    (
+        "## Detailed Summary",
+        "Provide a thorough paragraph-by-paragraph summary covering all major topics discussed — including background context shared, arguments debated, data presented, and the resolution of each discussion point. Capture specifics: numbers cited, dates mentioned, trade-offs weighed, and how each topic was resolved or deferred. Do not attribute statements to specific speakers unless clearly indicated in the transcript.",
     ),
 ]
 
@@ -89,14 +92,11 @@ def _build_compact_user_message(
     transcript_body: str,
     _meta: dict[str, str],
 ) -> str:
+    headings = "\n".join(heading for heading, _instruction in SUMMARY_TASKS)
     return (
-        "You are an expert meeting analyst. Use only the transcript. "
-        "Do not invent facts. Return a Markdown report with these exact headings:\n"
-        "## Executive Summary\n"
-        "## Detailed Summary\n"
-        "## Action Items\n"
-        "## Key Decisions\n"
-        "## Topics Discussed\n"
+        f"{ANALYSIS_SYSTEM_PROMPT}\n\n"
+        "Return a Markdown report with these exact headings:\n"
+        f"{headings}\n"
         "If a section has no explicit information, say none was explicitly stated.\n\n"
         "Transcript:\n"
         f"{transcript_body}"

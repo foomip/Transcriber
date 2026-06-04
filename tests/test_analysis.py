@@ -502,9 +502,16 @@ Dana will update the roadmap.
     sections = analysis._parse_report_sections(generated)
 
     assert [heading for heading, _text in sections] == [heading for heading, _task in analysis.SUMMARY_TASKS]
+    # Executive Summary is present in generated text
     assert sections[0] == ("## Executive Summary", "The team reviewed the Apollo budget.")
-    assert sections[1] == (
-        "## Detailed Summary",
-        "No information was generated for this section.",
-    )
-    assert sections[2] == ("## Action Items", "Dana will update the roadmap.")
+    # Action Items is present in generated text
+    assert sections[1] == ("## Action Items", "Dana will update the roadmap.")
+    # Key Decisions is missing — should get fallback
+    assert sections[2][0] == "## Key Decisions"
+    assert "No information was generated for this section." in sections[2][1]
+    # Risks & Open Questions is missing — should get fallback
+    assert sections[3][0] == "## Risks & Open Questions"
+    assert "No information was generated for this section." in sections[3][1]
+    # Detailed Summary is missing — should get fallback
+    assert sections[4][0] == "## Detailed Summary"
+    assert "No information was generated for this section." in sections[4][1]
