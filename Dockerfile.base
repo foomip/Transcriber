@@ -4,7 +4,11 @@ FROM python:3.14-slim
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    # Preload libstdc++ so that llama_cpp's shared libraries resolve C++
+    # symbols even when the pre-built wheel's .so files lack a DT_NEEDED
+    # dependency on libstdc++.  See https://github.com/abetlen/llama-cpp-python/issues/468
+    LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6
 
 # System packages needed by all wheels, including llama.cpp build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,9 +42,15 @@ RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
 
 WORKDIR /app
 
-# Install Python dependencies and build the CPU version of llama-cpp-python
+# Install Python dependencies (pure deps first, then llama-cpp-python).
+# The LD_PRELOAD above is the reliable fix for the broken wheel linkage;
+# we still attempt a from-source build as a belt-and-suspenders measure.
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN grep -v '^llama-cpp-python$' requirements.txt > requirements_no_llama.txt && \
+    python -m pip install --no-cache-dir -r requirements_no_llama.txt && \
+    rm requirements_no_llama.txt && \
+    FORCE_CMAKE=1 \
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
 
 COPY . .
 
