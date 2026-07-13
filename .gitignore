@@ -31,3 +31,4 @@ output/*
 
 # test coverage output files
 .coverage
+.vscode/settings.json
