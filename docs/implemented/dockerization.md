@@ -1,17 +1,17 @@
 # Dockerization Plan for the Transcriber Application
 
-**Project:** Local‑only meeting recorder, transcription, and summarization pipeline  
-**Document:** `docs/dockerization.md`  
-**Status:** Planning (no code changes applied yet)  
-**Last Updated:** 2026‑05‑30  
+**Project:** Local‑only meeting recorder, transcription, and summarization pipeline
+**Document:** `docs/dockerization.md`
+**Status:** Planning (no code changes applied yet)
+**Last Updated:** 2026‑05‑30
 
 ---
 
 ## 1. Introduction
 
-The current workflow requires users to manage a Python virtual environment (`whisper_env`) and to have the appropriate GPU drivers (CUDA, ROCm, or Intel) installed on the host in order to obtain hardware‑accelerated transcription and summarisation.  
+The current workflow requires users to manage a Python virtual environment (`whisper_env`) and to have the appropriate GPU drivers (CUDA, ROCm, or Intel) installed on the host in order to obtain hardware‑accelerated transcription and summarisation.
 
-Containerising the heavy‑lifting steps (transcription and analysis) decouples the application from host‑specific Python packages and driver installations, while still allowing the host to perform audio capture via `record_meeting.sh`.  
+Containerising the heavy‑lifting steps (transcription and analysis) decouples the application from host‑specific Python packages and driver installations, while still allowing the host to perform audio capture via `record_meeting.sh`.
 
 This document outlines a **phased implementation** that introduces:
 
@@ -31,7 +31,7 @@ No modifications to the existing Python source code (`transcribe.py`, `lib/*.py`
 | **Portability** | Users need only Docker (and, optionally, vendor‑specific container toolkits) to run the pipeline. |
 | **Reproducibility** | All runtime dependencies are locked inside the image; the same image yields identical behaviour across hosts. |
 | **Zero host‑side Python setup** | No virtual environment, `pip install`, or manual dependency resolution on the host. |
-| **Automatic hardware selection** | The wrapper chooses the best‑available backend (NVIDIA > ROCm > Intel > CPU) without user intervention. |
+| **Automatic hardware selection** | The wrapper chooses the best‑available backend (NVIDIA > ROCm > Intel > CPU) without user intervention. |
 | **Maintainability** | Shared base image reduces duplication; adding a new variant only requires a small Dockerfile. |
 | **Future‑proofing** | Keeping `ffmpeg` in the base enables optional audio format conversion or video‑to‑audio extraction later. |
 
@@ -41,7 +41,7 @@ No modifications to the existing Python source code (`transcribe.py`, `lib/*.py`
 
 | Requirement | Minimum version / notes |
 |-------------|------------------------|
-| Docker Engine | ≥ 20.10 |
+| Docker Engine | ≥ 20.10 |
 | **For NVIDIA GPU acceleration** | NVIDIA Container Toolkit (installs `nvidia-docker2` or equivalent) and a compatible NVIDIA driver. |
 | **For AMD/ROCm GPU acceleration** | ROCm‑compatible kernel and drivers; the wrapper uses `--device /dev/kfd --group-add video`. |
 | **For Intel GPU acceleration** | Intel graphics driver with Level Zero (`intel-level-zero-gpu`) and access to `/dev/dri`. |
@@ -69,7 +69,7 @@ No modifications to the existing Python source code (`transcribe.py`, `lib/*.py`
    docker run --rm transcriber:base python transcribe.py --help
    ```
 
-**Outcome:** A lightweight base image (~150 MB) that can be extended for any hardware target.
+**Outcome:** A lightweight base image (~150 MB) that can be extended for any hardware target.
 
 ---
 
@@ -81,10 +81,10 @@ No modifications to the existing Python source code (`transcribe.py`, `lib/*.py`
 
 | Variant | Dockerfile | Base Image | PyTorch install command |
 |---------|------------|------------|--------------------------|
-| CPU | `Dockerfile.cpu` | `transcriber:base` (or `python:3.14-slim` if you prefer a single‑stage) | `pip install torch` |
+| CPU | `Dockerfile.cpu` | `transcriber:base` | `pip install torch` |
 | NVIDIA | `Dockerfile.nvidia` | `nvidia/cuda:12.4.1-runtime-ubuntu22.04` (or latest LTS) | `pip install torch --index-url https://download.pytorch.org/whl/cu124` |
 | AMD/ROCm | `Dockerfile.rocm` | `rocm/pytorch:latest` (official ROCm‑PyTorch image) | *none* (image already contains ROCm‑enabled PyTorch) |
-| Intel | `Dockerfile.intel` | `transcriber:base` (or `intel/intel-optimized-pytorch:latest`) | `pip install torch intel-extension-for-pytorch` (plus optional Level‑Zero packages) |
+| Intel | `Dockerfile.intel` | `transcriber:base` | `pip install torch intel-extension-for-pytorch` (plus optional Level‑Zero packages) |
 
 **Steps for each variant:**
 
@@ -105,7 +105,7 @@ No modifications to the existing Python source code (`transcribe.py`, `lib/*.py`
    docker run --rm transcriber:nvidia python -c "import torch; print(torch.cuda.is_available())"
    ```
 
-**Outcome:** Four ready‑to‑run images, each ~2‑4 GB (dominated by the PyTorch wheel).
+**Outcome:** Four ready‑to‑run images, each ~2‑4 GB (dominated by the PyTorch wheel).
 
 ---
 
@@ -113,7 +113,7 @@ No modifications to the existing Python source code (`transcribe.py`, `lib/*.py`
 
 **Objective:** Provide a single command that:
 
-* Detects host hardware (NVIDIA > ROCm > Intel > CPU).
+* Detects host hardware (NVIDIA > ROCm > Intel > CPU).
 * Selects the matching image (or respects user overrides).
 * Applies the necessary Docker run flags (`--gpus all`, `--device /dev/kfd`, `--device /dev/dri`).
 * Mounts the audio file, an `output/` directory, and the HuggingFace cache.
@@ -222,31 +222,73 @@ These are **out of scope** for the initial phased implementation but can be cons
 
 ```Dockerfile
 # ---------- Dockerfile.base ----------
-FROM python:3.14-slim AS base
+# Common base image: OS packages, non-root user, source tree, pure-Python deps
+# Use Ubuntu 24.04 + the deadsnakes Python 3.14 PPA instead of the official
+# python:3.14-slim images. The Debian bookworm/trixie variants are currently
+# flagged by Docker DX for unpatched perl/tar/xz CVEs; Ubuntu's package set is
+# not affected by the same advisories.
+FROM ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
 
-# System packages needed by all wheels
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6
+
+# Install Python 3.14 via deadsnakes, then install system build/runtime deps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3.14 \
+        python3.14-dev \
+        python3.14-venv \
         build-essential \
+        cmake \
+        ninja-build \
+        pkg-config \
         libsndfile1 \
         ffmpeg \
         git \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non‑root user (UID/GID will be overridden at runtime)
+# Make python3.14 the default `python3` / `python`, then bootstrap pip.
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.14 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.14 1 && \
+    python3.14 -m ensurepip --upgrade && \
+    python3.14 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Create a non-root user (UID/GID overridden at runtime via --user)
 ARG USER_ID=1000
 ARG GROUP_ID=1000
-RUN addgroup --gid $GROUP_ID appgroup && \
-    adduser --uid $USER_ID --gid $GROUP_ID --disabled-password --gecos "" appuser
+RUN existing_group="$(getent group "$GROUP_ID" | cut -d: -f1 || true)" && \
+    if [ -n "$existing_group" ] && [ "$existing_group" != "appgroup" ]; then \
+        groupmod -n appgroup "$existing_group"; \
+    elif [ -z "$existing_group" ]; then \
+        addgroup --gid "$GROUP_ID" appgroup; \
+    fi && \
+    existing_user="$(getent passwd "$USER_ID" | cut -d: -f1 || true)" && \
+    if [ -n "$existing_user" ] && [ "$existing_user" != "appuser" ]; then \
+        usermod -l appuser -d /home/appuser -m -g "$GROUP_ID" "$existing_user"; \
+    elif [ -z "$existing_user" ]; then \
+        adduser --uid "$USER_ID" --gid "$GROUP_ID" --disabled-password --gecos "" appuser; \
+    else \
+        usermod -g "$GROUP_ID" appuser; \
+    fi
 
 WORKDIR /app
+
+# Install Python dependencies (pure deps first, then llama-cpp-python).
 COPY requirements.txt .
-# Install pure‑Python deps (no torch yet)
-RUN pip install --no-cache-dir -r requirements.txt
+RUN grep -v '^llama-cpp-python$' requirements.txt > requirements_no_llama.txt && \
+    python -m pip install --no-cache-dir -r requirements_no_llama.txt && \
+    rm requirements_no_llama.txt && \
+    FORCE_CMAKE=1 \
+    python -m pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
 
 COPY . .
 
-# Runtime user (will be overridden by docker run --user)
 USER appuser
 ENTRYPOINT ["python", "transcribe.py"]
 # --------------------------------------
@@ -381,7 +423,7 @@ docker build -f Dockerfile.rocm     -t transcriber:rocm     .
 docker build -f Dockerfile.intel    -t transcriber:intel    .
 ```
 
-To build all at once, run the four commands above (or script them).  
+To build all at once, run the four commands above (or script them).
 After building, you may set the `latest` alias to the CPU image (safe default):
 ```bash
 docker tag transcriber:cpu transcriber:latest
@@ -419,15 +461,15 @@ docker run --rm -v "$(pwd)":/app transcriber:latest pytest
 
 ## Maintenance
 
-- Image size: CPU ~1.2 GB, GPU variants add ~2‑3 GB each (mostly the PyTorch wheel).
+- Image size: CPU ~1.2 GB, GPU variants add ~2‑3 GB each (mostly the PyTorch wheel).
 - When `requirements.txt` changes, rebuild the images:
   ```bash
   docker build -f Dockerfile.nvidia -t transcriber:nvidia .
   # repeat for other variants
   ```
-- Periodically pull newer base images (`docker pull python:3.14-slim`, `docker pull nvidia/cuda:…`, etc.) and rebuild to incorporate security patches.
+- Periodically pull newer base images (`docker pull ubuntu:24.04`, `docker pull nvidia/cuda:…`, etc.) and rebuild to incorporate security patches.
 ```
 
---- 
+---
 
-*End of document.*  
+*End of document.*
