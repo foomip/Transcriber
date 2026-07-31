@@ -5,30 +5,45 @@ Record any online meeting **or** point it at a YouTube video - transcribe with [
 
 ## Table of Contents
 
-- [How It Works](#how-it-works)
-- [Requirements](#requirements)
-  - [System packages](#system-packages)
-  - [Python packages](#python-packages)
-  - [Hardware recommendations](#hardware-recommendations)
-- [Installation](#installation)
-- [Docker Workflow (Optional)](#docker-workflow-optional)
-  - [Docker prerequisites](#docker-prerequisites)
-  - [Building the images](#building-the-images)
-  - [Running the Docker wrapper](#running-the-docker-wrapper)
-  - [Testing in Docker](#testing-in-docker)
-- [Quick Start - Meeting Recording](#quick-start--meeting-recording)
-- [Quick Start - YouTube Summarization](#quick-start--youtube-summarization)
-- [Output Files](#output-files)
-  - [Transcript format](#transcript-format)
-  - [Report format](#report-format)
-- [Configuration](#configuration)
-  - [Whisper model size](#whisper-model-size)
-  - [Analysis model](#analysis-model)
-  - [Transcript prompt budget](#transcript-prompt-budget)
-- [Platform Notes - Pop!\_OS 24.04 with COSMIC Desktop](#platform-notes--pop_os-2404-with-cosmic-desktop)
-  - [Dummy Output bug (kernel 6.16.x)](#dummy-output-bug-kernel-616x)
-- [Troubleshooting](#troubleshooting)
-- [Privacy](#privacy)
+- [🎙️ transcriber](#️-transcriber)
+  - [Table of Contents](#table-of-contents)
+  - [How It Works](#how-it-works)
+  - [Why a Local Pipeline? (vs. Cloud Services)](#why-a-local-pipeline-vs-cloud-services)
+  - [Requirements](#requirements)
+    - [System packages](#system-packages)
+    - [Python packages](#python-packages)
+    - [Hardware Recommendations](#hardware-recommendations)
+  - [Installation](#installation)
+    - [1. Clone the repository](#1-clone-the-repository)
+    - [2. Create the virtual environment and install dependencies](#2-create-the-virtual-environment-and-install-dependencies)
+      - [AMD ROCm transcription setup](#amd-rocm-transcription-setup)
+    - [3. Make the recording script executable](#3-make-the-recording-script-executable)
+    - [4. Copy the direnv example file](#4-copy-the-direnv-example-file)
+    - [5. (Optional) Auto-activate the venv with direnv](#5-optional-auto-activate-the-venv-with-direnv)
+  - [Docker Workflow (Optional)](#docker-workflow-optional)
+    - [Docker prerequisites](#docker-prerequisites)
+    - [Building the images](#building-the-images)
+    - [Running the Docker wrapper](#running-the-docker-wrapper)
+    - [Testing in Docker](#testing-in-docker)
+  - [Quick Start - Meeting Recording](#quick-start---meeting-recording)
+    - [Step 1 - Start recording before your meeting begins](#step-1---start-recording-before-your-meeting-begins)
+    - [Step 2 - Transcribe and analyze](#step-2---transcribe-and-analyze)
+  - [Quick Start - YouTube Summarization](#quick-start---youtube-summarization)
+  - [Output Files](#output-files)
+    - [Meeting recording outputs](#meeting-recording-outputs)
+    - [YouTube outputs](#youtube-outputs)
+    - [Transcript format - meeting recording](#transcript-format---meeting-recording)
+    - [Transcript format - YouTube](#transcript-format---youtube)
+    - [Report format](#report-format)
+  - [Configuration](#configuration)
+    - [Transcription language](#transcription-language)
+    - [Whisper model size](#whisper-model-size)
+    - [Analysis model](#analysis-model)
+    - [Transcript prompt budget](#transcript-prompt-budget)
+  - [Platform Notes - Pop!\_OS 24.04 with COSMIC Desktop](#platform-notes---pop_os-2404-with-cosmic-desktop)
+    - [Dummy Output bug (kernel 6.16.x)](#dummy-output-bug-kernel-616x)
+  - [Troubleshooting](#troubleshooting)
+  - [Privacy](#privacy)
 
 ---
 
@@ -36,7 +51,7 @@ Record any online meeting **or** point it at a YouTube video - transcribe with [
 
 **Meeting recording path**
 
-```
+```text
 ┌─────────────────────┐     WAV      ┌──────────────────────┐
 │  record_meeting.sh  │ ──────────▶  │    transcribe.py     │
 │                     │              │                      │
@@ -52,7 +67,7 @@ Record any online meeting **or** point it at a YouTube video - transcribe with [
 
 **YouTube summarization path**
 
-```
+```TEXT=text
 ┌─────────────────────┐  transcript  ┌──────────────────────┐
 │ youtube-summarize   │ ──────────▶  │  lib/analysis.py     │
 │       .py           │              │                      │
@@ -66,7 +81,7 @@ Record any online meeting **or** point it at a YouTube video - transcribe with [
 
 Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path - only the text transcript is fetched from YouTube's public subtitle endpoint.
 
-`transcribe.py` auto-detects the available local accelerators at startup. Faster-Whisper transcription uses NVIDIA CUDA or AMD ROCm when CTranslate2 can see a GPU, and falls back cleanly to CPU otherwise. Both GPU families use CTranslate2 `device="cuda"` internally — the distinction is handled automatically. Analysis summarisation uses llama.cpp/GGUF for all backends (CPU, NVIDIA, AMD ROCm, and Intel), providing a unified, resource-efficient inference engine that can dynamically split model layers between GPU VRAM and system RAM.
+`transcribe.py` auto-detects the available local accelerators at startup. Native Faster-Whisper uses NVIDIA CUDA or AMD ROCm when CTranslate2 can see a GPU and falls back to CPU otherwise. Docker instead offers two stable targets: CPU-only, or cross-vendor Vulkan using whisper.cpp for transcription and llama.cpp/GGUF for analysis. The Vulkan path supports AMD, Intel, and NVIDIA and transparently retries failed GPU stages on CPU.
 
 ---
 
@@ -121,19 +136,22 @@ The pipeline has two main stages: transcription (Faster-Whisper) and summarizati
 Below are GPU recommendations for each stage.
 
 **Transcription (NVIDIA CUDA and AMD ROCm)**
+
 - Minimum: Any NVIDIA or AMD GPU with **2 GB VRAM** – will run the Whisper small model in FP16.
 - Recommended: **4 GB VRAM or more** (e.g. RTX 3060, RX 7600) for comfortable headroom and faster throughput.
-- AMD ROCm: Requires a ROCm-enabled CTranslate2 build (see [AMD ROCm setup](#amd-rocm-transcription-setup) below). 
+- AMD ROCm: Requires a ROCm-enabled CTranslate2 build (see [AMD ROCm setup](#amd-rocm-transcription-setup) below).
   - **Supported GPUs**: Generally RDNA 2 (RX 6000 series) and RDNA 3 (RX 7000 series) or newer.
   - **Unsupported GPUs**: Older architectures (e.g. RX 500 series / Vega) are not supported by the current ROCm toolchain and will fall back to CPU transcription.
 - CPU fallback: used automatically when no GPU is detected or supported.
 
 **Summarization (llama.cpp, works with CUDA and ROCm)**
+
 - Minimum: **8 GB VRAM** (NVIDIA or AMD) - loads the Gemma-4 E4B Q4_K_M model with limited GPU offloading.
 - Recommended: **12 GB VRAM or more** (e.g. RTX 3060-12GB, RTX 4070-12GB, RX 7900 XT) for smoother layer offloading and better throughput, especially with longer meetings.
 - VRAM scales with context length; for very long transcripts (>1 h) consider 16 GB+.
 
 **Overall system**
+
 - RAM: 8 GB+ system memory is adequate; 16 GB+ recommended for multitasking.
 - Storage: A few GB for models and temporary files; SSD preferred for faster model loading.
 
@@ -167,11 +185,13 @@ pip install -r requirements.txt
 For a native GPU build of `llama-cpp-python`, you must set `CMAKE_ARGS` during installation to enable CUDA or HIP kernels.
 
 **NVIDIA CUDA:**
+
 ```bash
 CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
 
 **AMD ROCm:**
+
 ```bash
 CMAKE_ARGS="-DGGML_HIP=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
@@ -231,80 +251,38 @@ After copying `.envrc.example` to `.envrc`, no further configuration is needed.
 
 ## Docker Workflow (Optional)
 
-The repository includes a Docker-based path for the transcription and report-generation steps. Audio capture still happens on the host with `record_meeting.sh`, so the privacy boundary stays local while Python dependencies, model runtime libraries, and CUDA/ROCm toolkits live inside container images.
+Docker uses two hardware-independent images: a safe CPU image and a Vulkan image. Audio capture still happens on the host, and all recordings, models, transcripts, and inference remain local.
 
 ### Docker prerequisites
 
 - Docker Engine 20.10+
-- **NVIDIA GPU**: NVIDIA Container Toolkit plus a compatible NVIDIA driver
-  - **Pop!_OS / Ubuntu users:** If you hit `failed to discover GPU vendor from CDI: no known GPU vendor found`, you must [install and configure the NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-  ```bash
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-  sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-  sudo nvidia-ctk runtime configure --runtime=docker
-  sudo mkdir -p /etc/cdi && sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
-  sudo systemctl restart docker
-  ```
-- **AMD / ROCm GPU**: ROCm-compatible host with `/dev/kfd` access
-- **Intel GPU**: Intel graphics stack with `/dev/dri` access
+- **AMD or Intel Vulkan:** a working host Vulkan driver and `/dev/dri/render*`
+- **NVIDIA Vulkan:** a compatible NVIDIA driver and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
-> The host does **not** need a Python virtual environment for the Docker workflow. The host still needs `ffmpeg` and `pactl` if you want to record meetings locally with `record_meeting.sh`.
+Vulkan removes CUDA/ROCm toolkit versions from the image, but it does not remove the host-driver requirement. NVIDIA's proprietary Vulkan libraries are injected by the Container Toolkit; AMD and Intel use Mesa through `/dev/dri`.
+
+> The host does **not** need a Python virtual environment for Docker. It still needs `ffmpeg` and `pactl` to record meetings with `record_meeting.sh`.
 
 ### Building the images
 
-You can pre-build the images or let `docker-run-transcribe.sh` build the selected image on first use.
-
-Build the shared base image first:
+The wrapper builds the selected target on first use. To pre-build both images:
 
 ```bash
-docker build -f Dockerfile.base -t transcriber:base .
-```
-
-Then build any variant you want to use:
-
-```bash
-docker build -f Dockerfile.cpu -t transcriber:cpu .
-docker build -f Dockerfile.nvidia -t transcriber:nvidia .
-docker build -f Dockerfile.rocm -t transcriber:rocm .
-docker build -f Dockerfile.intel -t transcriber:intel .
-```
-
-The ROCm image builds `llama-cpp-python` from source with HIP support. For manual AMD builds, you can reduce compile time by targeting your GPU architecture, for example RX 6000-series cards use `gfx1030`:
-
-```bash
-docker build --build-arg AMDGPU_TARGETS=gfx1030 -f Dockerfile.rocm -t transcriber:rocm .
-```
-
-When the wrapper auto-builds `transcriber:rocm` on a ROCm host, it reads `rocminfo` and passes the detected `gfx...` targets automatically. Set `AMDGPU_TARGETS` before running the wrapper if you want to override that detection.
-
-If you want a safe default tag for manual Docker runs, point `latest` at the CPU image:
-
-```bash
+docker build --target cpu -t transcriber:cpu .
+docker build --target vulkan -t transcriber:vulkan .
 docker tag transcriber:cpu transcriber:latest
 ```
 
-### Running the Docker wrapper
+The base image, Python dependencies, llama.cpp version, and whisper.cpp source commit are pinned. Update and test the CPU and Vulkan targets together rather than changing one runtime independently.
 
-Make the wrapper executable once:
+### Running the Docker wrapper
 
 ```bash
 chmod +x docker-run-transcribe.sh
-```
-
-Then run it against a recorded WAV file:
-
-```bash
 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 ```
 
-The wrapper automatically prefers backends in this order: **NVIDIA → ROCm → Intel → CPU**.
-
-For ROCm runs, the wrapper selects `transcriber:rocm`, passes `/dev/kfd`, `/dev/dri`, the required device owner groups, sets `HSA_ENABLE_SDMA=0`, and defaults `CT2_CUDA_ALLOCATOR=cub_caching` to avoid known RDNA2 CTranslate2 memory-fault crashes during Whisper model loading. It then mounts a GGUF cache at `/cache/transcriber/gguf`. The llama.cpp backend estimates a safe `n_gpu_layers` value from available ROCm VRAM and leaves the rest of the model in system RAM.
-
-If your AMD GPU has limited VRAM, force the CPU Docker image instead. The first two overrides below do that.
+The wrapper selects `transcriber:vulkan` when NVIDIA devices or a DRM render node are present. It first runs a probe-only container without mounting audio or caches. A failed probe selects `transcriber:cpu`. If Vulkan later fails during model loading or inference, the application retries that stage on CPU.
 
 Useful overrides:
 
@@ -313,8 +291,8 @@ Useful overrides:
 FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 ./docker-run-transcribe.sh --force-cpu meeting_20260527_114300.wav
 
-# Force a specific image
-./docker-run-transcribe.sh --image transcriber:rocm meeting_20260527_114300.wav
+# Force an official image
+./docker-run-transcribe.sh --image transcriber:vulkan meeting_20260527_114300.wav
 
 # Forward normal transcribe.py flags unchanged
 ./docker-run-transcribe.sh meeting_20260527_114300.wav -l en
@@ -323,37 +301,32 @@ FORCE_CPU=1 ./docker-run-transcribe.sh meeting_20260527_114300.wav
 The wrapper mounts:
 
 - the selected audio file read-only under `/input/...`
-- `output/` from the repository root to `/app/output`
-- your HuggingFace cache (default: `~/.cache/huggingface`) to `/cache/huggingface`
-- your GGUF cache (default: `~/.cache/transcriber/gguf`) to `/cache/transcriber/gguf`
+- `output/` to `/app/output`
+- `~/.cache/huggingface` for Faster-Whisper CPU fallback
+- `~/.cache/transcriber/gguf` for the analysis model
+- `~/.cache/transcriber/whisper` for the whisper.cpp Vulkan model
 
-Generated files still land in the same project `output/` directory:
+The first Vulkan transcription downloads the pinned `ggml-small.bin` model and verifies its SHA-256 checksum. Existing Faster-Whisper and GGUF caches remain unchanged.
+
+Generated files retain their existing locations and formats:
 
 - `output/<name>_transcript.txt`
 - `output/<name>_report.md`
 
 ### Testing in Docker
 
-Run the test suite inside any image by overriding the image entrypoint:
-
 ```bash
 docker run --rm --entrypoint pytest transcriber:cpu
+docker run --rm --entrypoint pytest transcriber:vulkan
+
+docker run --rm --entrypoint python transcriber:cpu \
+  -c "import ctranslate2, llama_cpp; print('CPU runtime OK')"
+
+docker run --rm --entrypoint transcriber-vulkan-probe \
+  --device /dev/dri transcriber:vulkan
 ```
 
-To test the current checkout instead of the code baked into the image, mount the repository into `/app`:
-
-```bash
-docker run --rm --entrypoint pytest -v "$(pwd)":/app transcriber:cpu
-```
-
-Quick accelerator smoke tests:
-
-```bash
-docker run --rm --entrypoint python transcriber:cpu -c "import torch; print(torch.cuda.is_available())"
-docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import torch; print(torch.cuda.is_available())"
-```
-
-> `ENTRYPOINT` in the Docker images is `python transcribe.py`, so use `--entrypoint` whenever you want to run something else such as `pytest` or `python -c ...`.
+For NVIDIA, run the probe with `--gpus all` and `NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility`. `ENTRYPOINT` remains `python transcribe.py`, so use `--entrypoint` for tests and diagnostics.
 
 ---
 
@@ -385,9 +358,9 @@ You can also provide a custom output filename:
 ./record_meeting.sh q2_planning.wav
 ```
 
-When the meeting ends, press `Ctrl+C`. The WAV file is finalised immediately.
+When the meeting ends, press `Ctrl+C`. The WAV file is finalized immediately.
 
-### Step 2 - Transcribe and analyse
+### Step 2 - Transcribe and analyze
 
 Activate the virtual environment if it is not already active, then pass the recording to `transcribe.py`:
 
@@ -484,7 +457,7 @@ For a video with ID `XmpKPs9Emx0`:
 
 ### Transcript format - meeting recording
 
-```
+```text
 # Transcription metadata
 Source file: meeting_20260527_114300.wav
 Whisper model: small
@@ -501,7 +474,7 @@ Detection confidence: 97%
 
 ### Transcript format - YouTube
 
-```
+```text
 # Transcription metadata
 Source: YouTube
 Video ID: XmpKPs9Emx0
@@ -665,7 +638,7 @@ Pop!\_OS 24.04 runs PipeWire with the `pipewire-pulse` compatibility layer, so a
 
 Some machines running kernel 6.16.x experience an intermittent regression where the HDA audio driver loses the hardware device and PipeWire falls back to a null sink. `record_meeting.sh` detects this condition at startup and exits with a clear error rather than silently recording silence:
 
-```
+```text
 ❌ Error: A dummy/null audio device was detected - your PipeWire session has
    lost track of the hardware. Reset it with:
 
@@ -710,7 +683,7 @@ export CT2_CUDA_ALLOCATOR=cub_caching
 python transcribe.py <audio.wav>
 ```
 
-Add the export to your `.envrc` to make it permanent for native runs. The Docker wrapper (`docker-run-transcribe.sh`) now defaults this variable to `cub_caching` on ROCm runs and still lets you override it explicitly from the host environment when needed.
+Add the export to your `.envrc` to make it permanent for native ROCm runs. Docker uses Vulkan instead of ROCm and does not use this allocator setting.
 
 For analysis summarisation, confirm your hardware is detected by the llama.cpp backend:
 
@@ -718,26 +691,22 @@ For analysis summarisation, confirm your hardware is detected by the llama.cpp b
 python transcribe.py --help
 ```
 
-If you are using Docker, verify that the matching image is being used and that Docker received the correct accelerator flags:
+For Docker, run the same vendor-neutral probe used by the wrapper:
 
 ```bash
 ./docker-run-transcribe.sh --help-docker
 
-docker run --rm --gpus all --entrypoint python transcriber:nvidia -c "import llama_cpp; print('llama_cpp ok')"
-docker run --rm --entrypoint python transcriber:rocm -c "import llama_cpp; print('llama_cpp ok')"
+# AMD / Intel
+docker run --rm --device /dev/dri \
+  --entrypoint transcriber-vulkan-probe transcriber:vulkan
+
+# NVIDIA
+docker run --rm --gpus all \
+  -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
+  --entrypoint transcriber-vulkan-probe transcriber:vulkan
 ```
 
-**AMD ROCm VRAM limits**
-
-ROCm Docker analysis uses llama.cpp and dynamically chooses how many Gemma 4 E4B GGUF layers to offload to the AMD GPU. This avoids the PyTorch/Transformers CPU/GPU offload path that can trigger ROCm memory access faults on consumer AMD cards.
-
-As a rough guide:
-
-- 12-16 GB AMD GPUs should usually offload most or all layers of the default Gemma 4 E4B GGUF model.
-- 8 GB AMD GPUs should offload fewer layers and use more system RAM.
-- 4-6 GB AMD GPUs may still work with a smaller or more heavily quantized GGUF model, but will be slower.
-
-If ROCm llama.cpp analysis fails with out-of-memory errors, GPU memory access faults, or repeated container crashes, use a smaller local GGUF model or CPU analysis instead:
+If the probe sees only `cpu` devices such as Lavapipe, update the host Vulkan driver. If the probe succeeds but a model does not fit in GPU memory, the application reduces llama.cpp GPU layers or falls back to CPU automatically. You can force CPU explicitly:
 
 ```bash
 ./docker-run-transcribe.sh --force-cpu meeting_20260527_114300.wav
