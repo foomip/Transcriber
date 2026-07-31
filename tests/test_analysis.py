@@ -10,6 +10,12 @@ from lib import analysis
 import lib.analysis.backend as analysis_backend
 
 
+@pytest.fixture(autouse=True)
+def native_runtime_profile(monkeypatch):
+    """Keep backend unit tests independent of the enclosing Docker profile."""
+    monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "native")
+
+
 BASE_META = {
     "title": "Meeting Recording",
     "date": "May 28, 2026",
@@ -515,3 +521,69 @@ Dana will update the roadmap.
     # Detailed Summary is missing — should get fallback
     assert sections[4][0] == "## Detailed Summary"
     assert "No information was generated for this section." in sections[4][1]
+
+
+def test_detect_analysis_backend_uses_vulkan_profile(tmp_path, monkeypatch):
+    from lib.vulkan import VulkanDevice
+
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * 1024)
+    device = VulkanDevice(
+        index=0,
+        name="Intel Arc",
+        device_type="discrete",
+        vendor_id=0x8086,
+        heap_size_bytes=8 * analysis._GIB,
+        heap_budget_bytes=6 * analysis._GIB,
+    )
+    monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "vulkan")
+    monkeypatch.setattr(analysis_backend, "_vulkan_device", lambda: device)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_is_available", lambda: True)
+    monkeypatch.setattr(analysis_backend, "_ensure_llama_cpp_model", lambda path: str(model_path))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_model_path", lambda: str(model_path))
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_gpu_offload_supported", lambda: True)
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "1")
+    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
+
+    backend = analysis.detect_analysis_backend(transcript_chars=1000)
+
+    assert backend.name == "vulkan"
+    assert backend.device_name == "Intel Arc"
+    assert backend.model_kwargs["n_gpu_layers"] > 0
+
+
+def test_cpu_profile_forces_zero_gpu_layers(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"model")
+    monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "cpu")
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, "42")
+
+    layers, notes = analysis._llama_cpp_gpu_layers(str(model_path))
+
+    assert layers == 0
+    assert "system RAM" in notes[0]
+
+
+def test_load_llama_cpp_model_retries_cpu_after_gpu_failure(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"model")
+    calls = []
+
+    class RetryLlama:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            if kwargs["n_gpu_layers"] > 0:
+                raise RuntimeError("out of device memory")
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", types.SimpleNamespace(Llama=RetryLlama))
+    backend = analysis.AnalysisBackend(
+        name="vulkan",
+        device_name="GPU",
+        model_id=str(model_path),
+        model_kwargs={"model_path": str(model_path), "n_gpu_layers": 10},
+    )
+
+    analysis._load_llama_cpp_model(backend)
+
+    assert [call["n_gpu_layers"] for call in calls] == [10, 0]
+    assert backend.model_kwargs["n_gpu_layers"] == 10

@@ -110,16 +110,10 @@ def run(audio_path: str, language: str | None = None) -> None:
 
     print("─" * 56)
     print("  🔎  Detecting compute device...")
-    device, compute_type = transcription.detect_device()
 
     # ── Step 1: Transcribe ─────────────────────────────────────────────────
     print("\n▶ Step 1/3: Transcribing audio")
-    result = transcription.transcribe_audio(
-        audio_path,
-        device,
-        compute_type,
-        language=language,
-    )
+    result = transcription.transcribe_audio_auto(audio_path, language=language)
 
     if not result.lines:
         print("⚠️  No speech detected in the recording. Exiting.")
@@ -151,7 +145,7 @@ def run(audio_path: str, language: str | None = None) -> None:
         result.detected_language_description,
     )
     meta["language_probability"] = f"{result.language_probability:.0%}"
-    meta["transcription_model"] = f"Faster-Whisper {result.model_size}"
+    meta["transcription_model"] = f"{result.engine} {result.model_size}"
     transcript_body  = report.build_transcript_body(result.lines)
 
     try:

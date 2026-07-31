@@ -280,3 +280,105 @@ def test_transcribe_audio_passes_cuda_device_for_rocm_gpu(monkeypatch):
     transcription.transcribe_audio("audio.wav", "cuda", "float16")
 
     assert created_models[0] == ("cuda", "float16")
+
+
+# ---------------------------------------------------------------------------
+# transcribe_audio_auto backend routing
+# ---------------------------------------------------------------------------
+
+
+def test_transcribe_audio_auto_cpu_profile_forces_faster_whisper_cpu(monkeypatch):
+    calls = []
+    monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "cpu")
+    monkeypatch.setenv("TRANSCRIBER_TRANSCRIPTION_BACKEND", "auto")
+    monkeypatch.setattr(
+        transcription,
+        "transcribe_audio",
+        lambda audio, device, compute_type, language=None: calls.append(
+            (audio, device, compute_type, language)
+        )
+        or transcription.TranscriptionResult(
+            lines=[],
+            requested_language=language,
+            requested_language_description=None,
+            detected_language="en",
+            detected_language_description="English",
+            language_probability=1.0,
+            model_size="small",
+        ),
+    )
+
+    transcription.transcribe_audio_auto("audio.wav", language="en")
+
+    assert calls == [("audio.wav", "cpu", "int8", "en")]
+
+
+def test_transcribe_audio_auto_uses_whisper_cpp_for_vulkan(monkeypatch, tmp_path):
+    from lib import vulkan, whisper_cpp
+    from lib.vulkan import VulkanDevice, VulkanProbeResult
+
+    device = VulkanDevice(1, "Radeon", "discrete", 0x1002, 8, 7)
+    monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "vulkan")
+    monkeypatch.setenv("TRANSCRIBER_TRANSCRIPTION_BACKEND", "auto")
+    monkeypatch.setattr(
+        vulkan,
+        "probe_vulkan",
+        lambda: VulkanProbeResult(True, device, (device,)),
+    )
+    monkeypatch.setattr(whisper_cpp, "ensure_model", lambda: tmp_path / "model.bin")
+    monkeypatch.setattr(
+        whisper_cpp,
+        "transcribe",
+        lambda *args, **kwargs: whisper_cpp.WhisperCppResult(
+            ((0.0, 1.25, "Hello"),), "en", 0.95
+        ),
+    )
+
+    result = transcription.transcribe_audio_auto("audio.wav")
+
+    assert result.engine == "whisper.cpp"
+    assert result.lines == ["[00:00:00.00 -> 00:00:01.25]  Hello"]
+    assert result.language_probability == 0.95
+
+
+def test_transcribe_audio_auto_falls_back_once_after_whisper_cpp_error(monkeypatch):
+    from lib import vulkan, whisper_cpp
+    from lib.vulkan import VulkanDevice, VulkanProbeResult
+
+    device = VulkanDevice(0, "GPU", "discrete", 0, None, None)
+    fallback_calls = []
+    monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "vulkan")
+    monkeypatch.setattr(
+        vulkan,
+        "probe_vulkan",
+        lambda: VulkanProbeResult(True, device, (device,)),
+    )
+    monkeypatch.setattr(whisper_cpp, "ensure_model", lambda: None)
+    monkeypatch.setattr(
+        whisper_cpp,
+        "transcribe",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            whisper_cpp.WhisperCppError("device lost")
+        ),
+    )
+    monkeypatch.setattr(
+        transcription,
+        "transcribe_audio",
+        lambda audio, device, compute_type, language=None: fallback_calls.append(
+            (device, compute_type)
+        )
+        or transcription.TranscriptionResult(
+            lines=[],
+            requested_language=None,
+            requested_language_description=None,
+            detected_language="en",
+            detected_language_description="English",
+            language_probability=1.0,
+            model_size="small",
+        ),
+    )
+
+    result = transcription.transcribe_audio_auto("audio.wav")
+
+    assert result.engine == "faster-whisper"
+    assert fallback_calls == [("cpu", "int8")]

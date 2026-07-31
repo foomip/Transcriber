@@ -10,7 +10,7 @@ Responsibilities:
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import ctranslate2
 from faster_whisper import WhisperModel
@@ -33,6 +33,7 @@ class TranscriptionResult:
     detected_language_description: str
     language_probability: float
     model_size: str
+    engine: str = "faster-whisper"
 
 
 class WhisperTranscriber(Protocol):
@@ -77,7 +78,7 @@ def _best_gpu_compute_type() -> str:
     if not callable(get_supported):
         return "float16"
     try:
-        supported: set[str] = set(get_supported("cuda"))
+        supported: set[str] = set(cast(Any, get_supported)("cuda"))
     except Exception:  # noqa: BLE001
         return "float16"
     for candidate in _GPU_COMPUTE_TYPE_PREFERENCE:
@@ -200,4 +201,104 @@ def transcribe_audio(
         detected_language_description=detected_language_description,
         language_probability=info.language_probability,
         model_size=WHISPER_MODEL_SIZE,
+        engine="faster-whisper",
+    )
+
+
+def _faster_whisper_fallback(
+    audio_path: str,
+    language: str | None,
+    *,
+    force_cpu: bool,
+) -> TranscriptionResult:
+    if force_cpu:
+        device, compute_type = "cpu", _CPU_COMPUTE_TYPE
+        print("  ℹ️  Using Faster-Whisper CPU fallback")
+    else:
+        device, compute_type = detect_device()
+    return transcribe_audio(
+        audio_path,
+        device,
+        compute_type,
+        language=language,
+    )
+
+
+def transcribe_audio_auto(
+    audio_path: str,
+    language: str | None = None,
+) -> TranscriptionResult:
+    """Select whisper.cpp Vulkan or Faster-Whisper without changing the CLI.
+
+    Docker profiles are explicit: the CPU image always uses Faster-Whisper on
+    CPU, while the Vulkan image attempts whisper.cpp and falls back to CPU for
+    expected runtime/model failures. Native execution keeps the existing
+    Faster-Whisper CUDA/ROCm/CPU detection unless whisper.cpp is requested.
+    """
+    profile = os.environ.get("TRANSCRIBER_RUNTIME_PROFILE", "native").strip().lower()
+    preference = os.environ.get("TRANSCRIBER_TRANSCRIPTION_BACKEND", "auto").strip().lower()
+    if preference not in {"auto", "faster_whisper", "whisper_cpp"}:
+        print(
+            "  ⚠️  Ignoring invalid TRANSCRIBER_TRANSCRIPTION_BACKEND="
+            f"{preference!r}"
+        )
+        preference = "auto"
+
+    force_cpu = profile in {"cpu", "vulkan"}
+    use_whisper_cpp = preference == "whisper_cpp" or (
+        preference == "auto" and profile == "vulkan"
+    )
+    if not use_whisper_cpp:
+        return _faster_whisper_fallback(
+            audio_path,
+            language,
+            force_cpu=force_cpu,
+        )
+
+    # Imports are lazy so native/CPU users do not pay for Vulkan adapter setup.
+    from lib.vulkan import probe_vulkan
+    from lib.whisper_cpp import WhisperCppError, ensure_model, transcribe
+
+    probe = probe_vulkan()
+    if not probe.available or probe.selected_device is None:
+        print(f"  ⚠️  Vulkan transcription unavailable: {probe.reason}; using CPU")
+        return _faster_whisper_fallback(audio_path, language, force_cpu=True)
+
+    device = probe.selected_device
+    print(f"  ✅ Vulkan GPU detected for transcription: {device.name}")
+    try:
+        print(f"\n📦 Preparing whisper.cpp ({WHISPER_MODEL_SIZE}) on [VULKAN]...")
+        model_path = ensure_model()
+        print(f"📝 Transcribing '{os.path.basename(audio_path)}' with whisper.cpp...")
+        raw_result = transcribe(
+            audio_path,
+            model_path=model_path,
+            device=device,
+            language=language,
+        )
+    except WhisperCppError as exc:
+        print(f"  ⚠️  Vulkan transcription failed: {exc}")
+        return _faster_whisper_fallback(audio_path, language, force_cpu=True)
+
+    detected_description = language_description(raw_result.detected_language) or "Unknown"
+    lines = [
+        f"[{fmt_ts(start)} -> {fmt_ts(end)}]  {text}"
+        for start, end, text in raw_result.segments
+    ]
+    for line in lines:
+        print(line)
+    print(
+        f"🌐 Detected language: {detected_description} "
+        f"({raw_result.detected_language}) "
+        f"({raw_result.language_probability:.0%} confidence)\n"
+    )
+    return TranscriptionResult(
+        lines=lines,
+        requested_language=language,
+        requested_language_description=language_description(language),
+        detected_language=raw_result.detected_language,
+        detected_language_description=detected_description,
+        language_probability=raw_result.language_probability,
+        model_size=WHISPER_MODEL_SIZE,
+        engine="whisper.cpp",
     )

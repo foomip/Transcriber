@@ -57,8 +57,8 @@ def _fit_prompt_to_context(
         return prompt, max_new_tokens
 
     try:
-        context_size = int(n_ctx_fn())
-        tokens = list(tokenize_fn(prompt.encode("utf-8")))
+        context_size = int(cast(Any, n_ctx_fn)())
+        tokens = list(cast(Any, tokenize_fn)(prompt.encode("utf-8")))
     except Exception:
         return prompt, max_new_tokens
 
@@ -72,7 +72,9 @@ def _fit_prompt_to_context(
         return prompt, max_new_tokens
 
     try:
-        trimmed = detokenize_fn(tokens[:allowed_prompt_tokens]).decode("utf-8", "ignore")
+        trimmed = cast(Any, detokenize_fn)(tokens[:allowed_prompt_tokens]).decode(
+            "utf-8", "ignore"
+        )
     except Exception:
         return prompt, max_new_tokens
     print(
@@ -125,12 +127,27 @@ def _load_llama_cpp_model(backend: AnalysisBackend) -> LlamaCppModel:
         model_path = _ensure_llama_cpp_model(model_path)
         backend.model_kwargs["model_path"] = model_path
 
+    model_kwargs = dict(backend.model_kwargs)
     try:
-        return cast(LlamaCppModel, llama_cpp_module.Llama(**backend.model_kwargs))
-    except Exception as exc:
-        raise AnalysisModelError(
-            f"Could not load llama.cpp analysis model {model_path}: {exc}"
-        ) from exc
+        return cast(LlamaCppModel, llama_cpp_module.Llama(**model_kwargs))
+    except Exception as gpu_exc:
+        gpu_layers = int(model_kwargs.get("n_gpu_layers", 0))
+        if gpu_layers == 0:
+            raise AnalysisModelError(
+                f"Could not load llama.cpp analysis model {model_path}: {gpu_exc}"
+            ) from gpu_exc
+
+        print(
+            f"  ⚠️  GPU model loading failed ({gpu_exc}); retrying analysis on CPU"
+        )
+        cpu_kwargs = {**model_kwargs, "n_gpu_layers": 0}
+        try:
+            return cast(LlamaCppModel, llama_cpp_module.Llama(**cpu_kwargs))
+        except Exception as cpu_exc:
+            raise AnalysisModelError(
+                f"Could not load llama.cpp analysis model {model_path}; "
+                f"GPU attempt failed: {gpu_exc}; CPU fallback failed: {cpu_exc}"
+            ) from cpu_exc
 
 
 def _generate_report_with_llama_cpp(

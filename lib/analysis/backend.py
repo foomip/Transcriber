@@ -24,6 +24,7 @@ from typing import Any
 from .utils import AnalysisModelError
 from lib.hardware import detect_gpu as _shared_detect_gpu, parse_rocm_product_name
 from lib.progress import ProgressTimer
+from lib.vulkan import VulkanDevice
 
 # ---------------------------------------------------------------------------
 # Environment variable names
@@ -156,13 +157,48 @@ def _available_ram_bytes() -> int | None:
 
 
 def _detect_gpu() -> tuple[str, str]:
-    """Return (kind, device_name). kind is 'cuda', 'rocm', or 'cpu'.
-
-    Delegates to ``lib.hardware.detect_gpu`` so detection logic is not
-    duplicated.  This thin wrapper is kept for backwards compatibility with
-    internal callers inside this module.
-    """
+    """Return native CUDA/ROCm/CPU hardware for backwards compatibility."""
     return _shared_detect_gpu()
+
+
+def _runtime_profile() -> str:
+    profile = os.environ.get("TRANSCRIBER_RUNTIME_PROFILE", "native").strip().lower()
+    return profile if profile in {"native", "cpu", "vulkan"} else "native"
+
+
+def _vulkan_device() -> VulkanDevice | None:
+    from lib.vulkan import probe_vulkan
+
+    probe = probe_vulkan()
+    return probe.selected_device if probe.available else None
+
+
+def _detect_analysis_hardware() -> tuple[str, str]:
+    profile = _runtime_profile()
+    if profile == "cpu":
+        return "cpu", "CPU"
+    if profile == "vulkan":
+        device = _vulkan_device()
+        if device is not None:
+            return "vulkan", device.name
+        return "cpu", "CPU"
+    return _detect_gpu()
+
+
+def _vulkan_free_memory_bytes() -> int | None:
+    device = _vulkan_device()
+    if device is None:
+        return None
+    reported = device.heap_budget_bytes or device.heap_size_bytes
+    if reported is None:
+        return None
+    # Integrated GPUs share system memory. Never budget more than currently
+    # available RAM, even when a driver reports a larger logical heap.
+    if device.device_type == "integrated":
+        available_ram = _available_ram_bytes()
+        if available_ram is not None:
+            return min(reported, available_ram)
+    return reported
 
 
 def _nvidia_free_vram_bytes() -> int | None:
@@ -495,17 +531,23 @@ def _llama_cpp_gpu_layers(
     model_path: str,
     transcript_chars: int | None = None,
 ) -> tuple[int, tuple[str, ...]]:
+    detected_kind, _ = _detect_analysis_hardware()
+    if _runtime_profile() in {"cpu", "vulkan"} and detected_kind == "cpu":
+        return 0, ("No hardware Vulkan device is available; using system RAM",)
+
     configured_gpu_layers = _positive_int_env(LLAMA_CPP_GPU_LAYERS_ENV)
     if configured_gpu_layers is not None:
         return configured_gpu_layers, (
             f"Using {LLAMA_CPP_GPU_LAYERS_ENV}={configured_gpu_layers} GPU layers",
         )
 
-    kind, _ = _detect_gpu()
+    kind, _ = _detect_analysis_hardware()
     if kind == "cuda":
         free_bytes = _nvidia_free_vram_bytes()
     elif kind == "rocm":
         free_bytes = _amd_free_vram_bytes()
+    elif kind == "vulkan":
+        free_bytes = _vulkan_free_memory_bytes()
     else:
         free_bytes = None
 
@@ -601,7 +643,7 @@ def _llama_cpp_analysis_backend(
 def detect_analysis_backend(transcript_chars: int | None = None) -> AnalysisBackend:
     """Return the best analysis backend for summarization."""
     backend_preference = _analysis_backend_preference()
-    kind, device_name = _detect_gpu()
+    kind, device_name = _detect_analysis_hardware()
 
     if kind == "cpu":
         # In a llama.cpp-only world, CPU is just llama.cpp with 0 layers on GPU.

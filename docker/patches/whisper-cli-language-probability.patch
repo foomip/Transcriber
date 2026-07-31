@@ -1,0 +1,23 @@
+diff --git a/examples/cli/cli.cpp b/examples/cli/cli.cpp
+index c64976a5..3969ee4d 100644
+--- a/examples/cli/cli.cpp
++++ b/examples/cli/cli.cpp
+@@ -733,7 +733,17 @@ static void output_json(
+             value_b("translate", params.translate, true);
+         end_obj(false);
+         start_obj("result");
+-            value_s("language", whisper_lang_str(whisper_full_lang_id(ctx)), true);
++            const int selected_language = whisper_full_lang_id(ctx);
++            std::vector<float> language_probabilities(whisper_lang_max_id() + 1, 0.0f);
++            const int detected_language = whisper_lang_auto_detect(
++                ctx, 0, params.n_threads, language_probabilities.data());
++            const float language_probability =
++                detected_language >= 0 && selected_language >= 0 &&
++                selected_language < (int) language_probabilities.size()
++                    ? language_probabilities[selected_language]
++                    : 0.0f;
++            value_s("language", whisper_lang_str(selected_language), false);
++            value_f("language_probability", language_probability, true);
+         end_obj(false);
+         start_arr("transcription");
+ 

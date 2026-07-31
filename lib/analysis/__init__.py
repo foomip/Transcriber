@@ -94,10 +94,15 @@ def generate_summaries(
         print(f"  ✅ CUDA GPU detected for summarization: {backend.device_name}")
     elif backend.name == "rocm" and gpu_layers > 0:
         print(f"  ✅ ROCm GPU detected for summarization: {backend.device_name}")
+    elif backend.name == "vulkan" and gpu_layers > 0:
+        print(f"  ✅ Vulkan GPU detected for summarization: {backend.device_name}")
     else:
-        # GPU detected but llama.cpp has no offload support, or pure CPU
-        if backend.name in ("cuda", "rocm"):
-            print(f"  ⚠️  GPU detected ({backend.device_name}) but llama-cpp-python lacks GPU support — using CPU")
+        # GPU detected but llama.cpp has no offload support, or pure CPU.
+        if backend.name in ("cuda", "rocm", "vulkan"):
+            print(
+                f"  ⚠️  GPU detected ({backend.device_name}) but GPU offload is "
+                "unavailable — using CPU"
+            )
         else:
             print("  ℹ️  Using CPU for summarization")
     for note in backend.notes:

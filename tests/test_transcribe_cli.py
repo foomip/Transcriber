@@ -78,11 +78,10 @@ def test_run_writes_transcript_only_when_analysis_is_declined(tmp_path, monkeypa
     audio_path.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
 
-    monkeypatch.setattr(transcribe.transcription, "detect_device", lambda: ("cpu", "int8"))
     monkeypatch.setattr(
         transcribe.transcription,
-        "transcribe_audio",
-        lambda audio, device, compute_type, language=None: make_result(),
+        "transcribe_audio_auto",
+        lambda audio, language=None: make_result(),
     )
     monkeypatch.setattr(transcribe, "should_continue_with_analysis", lambda: False)
 
@@ -105,11 +104,10 @@ def test_run_writes_report_for_full_mocked_pipeline(tmp_path, monkeypatch):
         calls.meta = meta
         return [("## Executive Summary", "The team said hello.")]
 
-    monkeypatch.setattr(transcribe.transcription, "detect_device", lambda: ("cpu", "int8"))
     monkeypatch.setattr(
         transcribe.transcription,
-        "transcribe_audio",
-        lambda audio, device, compute_type, language=None: make_result(),
+        "transcribe_audio_auto",
+        lambda audio, language=None: make_result(),
     )
     monkeypatch.setattr(transcribe, "should_continue_with_analysis", lambda: True)
     monkeypatch.setattr(transcribe.analysis, "generate_summaries", fake_generate_summaries)
@@ -134,11 +132,10 @@ def test_run_exits_without_report_when_no_speech_is_detected(tmp_path, monkeypat
     audio_path = tmp_path / "meeting_20260528_0930.wav"
     audio_path.write_bytes(b"")
 
-    monkeypatch.setattr(transcribe.transcription, "detect_device", lambda: ("cpu", "int8"))
     monkeypatch.setattr(
         transcribe.transcription,
-        "transcribe_audio",
-        lambda audio, device, compute_type, language=None: make_result(lines=[]),
+        "transcribe_audio_auto",
+        lambda audio, language=None: make_result(lines=[]),
     )
 
     with pytest.raises(SystemExit) as exc_info:
