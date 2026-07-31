@@ -1,6 +1,0 @@
-# ---------- Dockerfile.cpu ----------
-# CPU-only variant — inherits everything from the base image.
-FROM transcriber:base
-
-# Entrypoint inherited from base
-# --------------------------------------

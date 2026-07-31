@@ -1,6 +1,0 @@
-# ---------- Dockerfile.intel ----------
-# Intel GPU variant — now uses the CPU-only llama.cpp build (same as CPU image).
-FROM transcriber:base
-
-# Entrypoint inherited from base
-# --------------------------------------
