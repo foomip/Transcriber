@@ -46,7 +46,7 @@ LLAMA_CPP_LAYER_COUNT_ENV = "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT"
 # ---------------------------------------------------------------------------
 
 DEFAULT_LLAMA_CPP_MODEL_REPO_ID = "ggml-org/gemma-4-E4B-it-GGUF"
-DEFAULT_LLAMA_CPP_MODEL_FILENAME = "gemma-4-E4B-it-Q4_K_M.gguf"
+DEFAULT_LLAMA_CPP_MODEL_FILENAME = "gemma-4-E4B-it-Q4_0.gguf"
 
 LLAMA_CPP_BACKEND_NAME = "llama_cpp"
 

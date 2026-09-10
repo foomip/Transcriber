@@ -287,6 +287,13 @@ def test_llama_cpp_gpu_layers_reports_rocm_offload_like_cuda(tmp_path, monkeypat
     assert "11/32" in notes[0]
 
 
+def test_default_llama_cpp_model_points_at_existing_repo_file():
+    # The ggml-org repo ships Q4_0 (there is no Q4_K_M build), and the mtp-*
+    # files are auxiliary multi-token-prediction modules, not the main model.
+    assert analysis.DEFAULT_LLAMA_CPP_MODEL_REPO_ID == "ggml-org/gemma-4-E4B-it-GGUF"
+    assert analysis.DEFAULT_LLAMA_CPP_MODEL_FILENAME == "gemma-4-E4B-it-Q4_0.gguf"
+
+
 def test_ensure_llama_cpp_model_downloads_from_huggingface(tmp_path, monkeypatch):
     model_path = tmp_path / analysis.DEFAULT_LLAMA_CPP_MODEL_FILENAME
     downloaded_path = tmp_path / "downloaded.gguf"

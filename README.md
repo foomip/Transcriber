@@ -146,7 +146,7 @@ Below are GPU recommendations for each stage.
 
 **Summarization (llama.cpp, works with CUDA and ROCm)**
 
-- Minimum: **8 GB VRAM** (NVIDIA or AMD) - loads the Gemma-4 E4B Q4_K_M model with limited GPU offloading.
+- Minimum: **8 GB VRAM** (NVIDIA or AMD) - loads the Gemma-4 E4B Q4_0 model with limited GPU offloading.
 - Recommended: **12 GB VRAM or more** (e.g. RTX 3060-12GB, RTX 4070-12GB, RX 7900 XT) for smoother layer offloading and better throughput, especially with longer meetings.
 - VRAM scales with context length; for very long transcripts (>1 h) consider 16 GB+.
 
@@ -673,6 +673,18 @@ python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count(), ctrans
 ```
 
 On NVIDIA this requires the standard PyPI `ctranslate2` wheel. On AMD ROCm, the standard PyPI wheel reports 0 devices — run `bash scripts/install_ctranslate2_rocm.sh` to install a ROCm-enabled build (see [AMD ROCm transcription setup](#amd-rocm-transcription-setup) above).
+
+**`Library libcublas.so.12 is not found or cannot be loaded` (CUDA 13 hosts)**
+
+PyPI CTranslate2 wheels (including 4.8.2) are built against CUDA 12 and hard-require `libcublas.so.12`. On hosts with a CUDA 13-only driver (e.g. NVIDIA driver 580.x), GPU transcription fails with that error even though `nvidia-smi` reports the GPU.
+
+Build CTranslate2 from source against a venv-local CUDA 13 toolkit (no system CUDA install, no sudo required):
+
+```bash
+bash scripts/install_ctranslate2_cuda13.sh
+```
+
+The script pins a compatible set of NVIDIA pip packages (nvcc 13.0, CCCL, cuBLAS 13), builds and installs CTranslate2 into `whisper_env/opt/ctranslate2`, and wires up the loader paths (RPATH + venv activation hook) so plain `whisper_env/bin/python` works without extra environment variables. Re-running the script is safe.
 
 **AMD ROCm transcription: RDNA2 allocator quirk**
 

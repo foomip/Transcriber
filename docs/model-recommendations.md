@@ -108,7 +108,7 @@ GGUF-specific recommendations (ready to use with llama.cpp):
 
 | GGUF Model File                         | Why Consider It                                  | Fit                                      |
 | --------------------------------------- | ------------------------------------------------ | ---------------------------------------- |
-| `gemma-4-E4B-it-Q4_K_M.gguf`            | Current default target; strong summaries through llama.cpp | Best first option for all backends         |
+| `gemma-4-E4B-it-Q4_0.gguf`              | Current default target; strong summaries through llama.cpp | Best first option for all backends         |
 | `Qwen2.5-3B-Instruct-Q4_K_M.gguf`       | Compact and capable if Gemma is too heavy        | Good lower-resource fallback             |
 | `Qwen2.5-7B-Instruct-Q4_K_M.gguf`       | Better summaries if VRAM/RAM budget allows       | Good quality upgrade for larger systems  |
 | `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf`  | Widely used instruct model with strong summaries | Strong comparison model                  |
