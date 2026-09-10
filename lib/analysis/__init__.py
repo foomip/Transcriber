@@ -23,6 +23,7 @@ from .backend import (  # noqa: F401
     LLAMA_CPP_CONTEXT_SIZE_ENV,
     LLAMA_CPP_GPU_HEADROOM_ENV,
     LLAMA_CPP_GPU_LAYERS_ENV,
+    LLAMA_CPP_KV_CACHE_TYPE_ENV,
     LLAMA_CPP_LAYER_COUNT_ENV,
     LLAMA_CPP_MODEL_PATH_ENV,
     LLAMA_CPP_MODEL_REPO_ENV,
@@ -48,6 +49,9 @@ from .backend import (  # noqa: F401
     _llama_cpp_context_size,
     _required_llama_cpp_context_size,
     _llama_cpp_gpu_layers,
+    _llama_cpp_gpu_backend,
+    _kv_cache_config,
+    _KV_CACHE_TYPES,
     detect_analysis_backend,
 )
 from .model import (  # noqa: F401

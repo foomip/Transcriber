@@ -16,6 +16,16 @@ def native_runtime_profile(monkeypatch):
     monkeypatch.setenv("TRANSCRIBER_RUNTIME_PROFILE", "native")
 
 
+@pytest.fixture(autouse=True)
+def cpu_only_llama_cpp_build(monkeypatch):
+    """Default tests to a CPU-only llama.cpp build (no GPU-backend routing).
+
+    The dev machine may have a GPU-enabled llama.cpp build installed; without
+    this, the hardware-routing tests would depend on the host's build.
+    """
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_compiled_libs", lambda: ())
+
+
 BASE_META = {
     "title": "Meeting Recording",
     "date": "May 28, 2026",
@@ -259,6 +269,8 @@ def test_llama_cpp_gpu_layers_uses_safe_vram_budget(tmp_path, monkeypatch):
     monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
     monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
     monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
+    # Pin to f16 so the layer count reflects the full (unquantized) KV cache.
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "f16")
 
     monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
     monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 6 * analysis._GIB)
@@ -277,6 +289,8 @@ def test_llama_cpp_gpu_layers_reports_rocm_offload_like_cuda(tmp_path, monkeypat
     monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
     monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
     monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
+    # Pin to f16 so the layer count reflects the full (unquantized) KV cache.
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "f16")
 
     monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("rocm", "AMD Radeon RX 6800"))
     monkeypatch.setattr(analysis_backend, "_amd_free_vram_bytes", lambda: 6 * analysis._GIB)
@@ -285,6 +299,86 @@ def test_llama_cpp_gpu_layers_reports_rocm_offload_like_cuda(tmp_path, monkeypat
 
     assert gpu_layers == 11
     assert "11/32" in notes[0]
+
+
+def test_kv_cache_config_defaults_to_q8_0(monkeypatch):
+    monkeypatch.delenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, raising=False)
+
+    cfg = analysis_backend._kv_cache_config()
+
+    assert cfg["name"] == "q8_0"
+    assert cfg["type_k"] == 8
+    assert cfg["type_v"] == 8
+    assert cfg["flash_attn"] is True
+    assert cfg["kv_factor"] < 1.0
+
+
+def test_kv_cache_config_q8_0_enables_flash_attn(monkeypatch):
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "q8_0")
+
+    cfg = analysis_backend._kv_cache_config()
+
+    assert cfg["name"] == "q8_0"
+    assert cfg["type_k"] == 8
+    assert cfg["type_v"] == 8
+    assert cfg["flash_attn"] is True
+    assert cfg["kv_factor"] < 1.0
+
+
+def test_kv_cache_config_invalid_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "fp8")
+
+    cfg = analysis_backend._kv_cache_config()
+
+    assert cfg["name"] == "q8_0"
+    assert cfg["flash_attn"] is True
+
+
+def test_llama_cpp_model_kwargs_includes_kv_cache_type(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * analysis._GIB)
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "q8_0")
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_gpu_layers", lambda *a, **k: (0, ()))
+
+    kwargs, notes = analysis_backend._llama_cpp_model_kwargs(str(model_path))
+
+    assert kwargs["flash_attn"] is True
+    assert kwargs["type_k"] == 8
+    assert kwargs["type_v"] == 8
+    assert any("q8_0" in note for note in notes)
+
+
+def test_llama_cpp_model_kwargs_defaults_to_q8_0_kv_cache(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * analysis._GIB)
+    monkeypatch.delenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, raising=False)
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_gpu_layers", lambda *a, **k: (0, ()))
+
+    kwargs, _notes = analysis_backend._llama_cpp_model_kwargs(str(model_path))
+
+    assert kwargs["flash_attn"] is True
+    assert kwargs["type_k"] == 8
+    assert kwargs["type_v"] == 8
+
+
+def test_llama_cpp_gpu_layers_applies_kv_cache_quant_factor(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"0" * 8 * analysis._GIB)
+    monkeypatch.delenv(analysis.LLAMA_CPP_GPU_LAYERS_ENV, raising=False)
+    monkeypatch.setenv(analysis.LLAMA_CPP_LAYER_COUNT_ENV, "32")
+    monkeypatch.setenv(analysis.LLAMA_CPP_CONTEXT_SIZE_ENV, "4096")
+    monkeypatch.setenv(analysis.LLAMA_CPP_GPU_HEADROOM_ENV, "2")
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
+    monkeypatch.setattr(analysis_backend, "_nvidia_free_vram_bytes", lambda: 6 * analysis._GIB)
+
+    # f16 reserves the full KV cache; q8_0 reserves less, so more layers fit.
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "f16")
+    f16_layers, _ = analysis._llama_cpp_gpu_layers(str(model_path))
+
+    monkeypatch.setenv(analysis.LLAMA_CPP_KV_CACHE_TYPE_ENV, "q8_0")
+    q8_layers, _ = analysis._llama_cpp_gpu_layers(str(model_path))
+
+    assert q8_layers > f16_layers
 
 
 def test_default_llama_cpp_model_points_at_existing_repo_file():
@@ -569,6 +663,107 @@ def test_cpu_profile_forces_zero_gpu_layers(tmp_path, monkeypatch):
 
     assert layers == 0
     assert "system RAM" in notes[0]
+
+
+def test_llama_cpp_gpu_backend_detects_vulkan_build(monkeypatch):
+    monkeypatch.setattr(
+        analysis_backend,
+        "_llama_cpp_compiled_libs",
+        lambda: ("libggml-base.so", "libggml-cpu.so", "libggml-vulkan.so"),
+    )
+
+    assert analysis_backend._llama_cpp_gpu_backend() == "vulkan"
+
+
+def test_llama_cpp_gpu_backend_detects_cuda_build(monkeypatch):
+    monkeypatch.setattr(
+        analysis_backend,
+        "_llama_cpp_compiled_libs",
+        lambda: ("libggml-base.so", "libggml-cpu.so", "libggml-cuda.so"),
+    )
+
+    assert analysis_backend._llama_cpp_gpu_backend() == "cuda"
+
+
+def test_llama_cpp_gpu_backend_none_for_cpu_only_build():
+    # The autouse fixture stubs _llama_cpp_compiled_libs to () (no GPU backend).
+    assert analysis_backend._llama_cpp_gpu_backend() is None
+
+
+def test_detect_analysis_hardware_routes_vulkan_build_to_vulkan_device(monkeypatch):
+    from lib.vulkan import VulkanDevice
+
+    device = VulkanDevice(
+        index=1, name="NVIDIA GeForce RTX 3060", device_type="discrete",
+        vendor_id=0x10DE, heap_size_bytes=12 * analysis._GIB,
+        heap_budget_bytes=8 * analysis._GIB,
+    )
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_gpu_backend", lambda: "vulkan")
+    monkeypatch.setattr(analysis_backend, "_vulkan_device", lambda: device)
+
+    kind, name = analysis_backend._detect_analysis_hardware()
+
+    assert kind == "vulkan"
+    assert name == "NVIDIA GeForce RTX 3060"
+
+
+def test_detect_analysis_hardware_falls_back_to_detect_gpu_for_cuda_build(monkeypatch):
+    # A CUDA build drives the CUDA device that _detect_gpu reports.
+    monkeypatch.setattr(analysis_backend, "_llama_cpp_gpu_backend", lambda: "cuda")
+    monkeypatch.setattr(analysis_backend, "_detect_gpu", lambda: ("cuda", "RTX 3060"))
+
+    kind, name = analysis_backend._detect_analysis_hardware()
+
+    assert kind == "cuda"
+    assert name == "RTX 3060"
+
+
+def test_pin_vulkan_visible_device_sets_ggml_env(monkeypatch):
+    from lib.vulkan import VulkanDevice
+
+    device = VulkanDevice(
+        index=1, name="NVIDIA", device_type="discrete", vendor_id=0x10DE,
+        heap_size_bytes=12 * analysis._GIB, heap_budget_bytes=8 * analysis._GIB,
+    )
+    monkeypatch.delenv("GGML_VK_VISIBLE_DEVICES", raising=False)
+
+    analysis_backend._pin_vulkan_visible_device(device)
+
+    assert os.environ["GGML_VK_VISIBLE_DEVICES"] == "1"
+
+
+def test_pin_vulkan_visible_device_respects_user_override(monkeypatch):
+    from lib.vulkan import VulkanDevice
+
+    device = VulkanDevice(
+        index=1, name="NVIDIA", device_type="discrete", vendor_id=0x10DE,
+        heap_size_bytes=12 * analysis._GIB, heap_budget_bytes=8 * analysis._GIB,
+    )
+    monkeypatch.setenv("GGML_VK_VISIBLE_DEVICES", "0")
+
+    analysis_backend._pin_vulkan_visible_device(device)
+
+    assert os.environ["GGML_VK_VISIBLE_DEVICES"] == "0"
+
+
+def test_vulkan_device_pins_ggml_visible_devices(monkeypatch):
+    import lib.vulkan as vulkan_mod
+    from lib.vulkan import VulkanDevice, VulkanProbeResult
+
+    device = VulkanDevice(
+        index=1, name="NVIDIA", device_type="discrete", vendor_id=0x10DE,
+        heap_size_bytes=12 * analysis._GIB, heap_budget_bytes=8 * analysis._GIB,
+    )
+    monkeypatch.delenv("GGML_VK_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setattr(
+        vulkan_mod, "probe_vulkan",
+        lambda: VulkanProbeResult(True, device, devices=(device,)),
+    )
+
+    selected = analysis_backend._vulkan_device()
+
+    assert selected is device
+    assert os.environ["GGML_VK_VISIBLE_DEVICES"] == "1"
 
 
 def test_load_llama_cpp_model_retries_cpu_after_gpu_failure(tmp_path, monkeypatch):

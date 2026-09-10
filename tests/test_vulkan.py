@@ -92,6 +92,31 @@ def test_probe_handles_missing_binary(monkeypatch):
     assert "not found" in (result.reason or "")
 
 
+def test_select_device_prefers_nvidia_over_amd_regardless_of_free_vram(monkeypatch):
+    monkeypatch.delenv(vulkan.VULKAN_DEVICE_ENV, raising=False)
+    devices = (
+        # AMD card with MORE free VRAM (e.g. it's the display card, currently idle).
+        vulkan.VulkanDevice(
+            index=0, name="Radeon RX 7900 XTX", device_type="discrete",
+            vendor_id=0x1002, heap_size_bytes=25 * 1024**3,
+            heap_budget_bytes=25 * 1024**3,
+        ),
+        # NVIDIA card with less free VRAM right now.
+        vulkan.VulkanDevice(
+            index=1, name="NVIDIA GeForce RTX 3060", device_type="discrete",
+            vendor_id=0x10DE, heap_size_bytes=12 * 1024**3,
+            heap_budget_bytes=8 * 1024**3,
+        ),
+    )
+
+    selected = vulkan._select_device(devices)
+
+    # Vendor priority is deterministic (NVIDIA before AMD) and does not depend
+    # on the fluctuating free-VRAM budget.
+    assert selected is not None
+    assert selected.name == "NVIDIA GeForce RTX 3060"
+
+
 def test_probe_handles_timeout(monkeypatch):
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired("probe", 10)

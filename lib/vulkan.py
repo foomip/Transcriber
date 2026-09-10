@@ -116,10 +116,18 @@ def _select_device(devices: tuple[VulkanDevice, ...]) -> VulkanDevice | None:
             return None
         return next((device for device in devices if device.index == requested_index), None)
 
-    priority = {"discrete": 0, "integrated": 1, "virtual": 2}
+    # Deterministic vendor preference: NVIDIA, then AMD, then anything else.
+    # A free-VRAM heuristic is unstable when a GPU is shared with another
+    # workload (e.g. a display card running a separate LLM).
+    vendor_priority = {0x10DE: 0, 0x1002: 1}  # NVIDIA, AMD
+    type_priority = {"discrete": 0, "integrated": 1, "virtual": 2}
     return min(
         devices,
-        key=lambda device: (priority[device.device_type], device.index),
+        key=lambda device: (
+            vendor_priority.get(device.vendor_id, 2),
+            type_priority[device.device_type],
+            device.index,
+        ),
         default=None,
     )
 

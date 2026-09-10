@@ -40,6 +40,7 @@ LLAMA_CPP_BATCH_SIZE_ENV = "TRANSCRIBER_LLAMA_CPP_BATCH_SIZE"
 LLAMA_CPP_GPU_LAYERS_ENV = "TRANSCRIBER_LLAMA_CPP_GPU_LAYERS"
 LLAMA_CPP_GPU_HEADROOM_ENV = "TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB"
 LLAMA_CPP_LAYER_COUNT_ENV = "TRANSCRIBER_LLAMA_CPP_LAYER_COUNT"
+LLAMA_CPP_KV_CACHE_TYPE_ENV = "TRANSCRIBER_LLAMA_CPP_KV_CACHE_TYPE"
 
 # ---------------------------------------------------------------------------
 # Model / backend defaults
@@ -67,6 +68,27 @@ DEFAULT_LLAMA_CPP_BATCH_SIZE = 256
 DEFAULT_LLAMA_CPP_LAYER_COUNT = 42
 DEFAULT_LLAMA_CPP_GPU_HEADROOM_GIB = 3.0
 DEFAULT_LLAMA_CPP_KV_CACHE_GIB = 0.75
+
+# ---------------------------------------------------------------------------
+# KV cache quantization
+# ---------------------------------------------------------------------------
+
+# K/V cache data types accepted by the installed llama-cpp-python build
+# (``type_k``/``type_v`` take ``ggml_type`` ints). Quantized V cache requires
+# flash attention to be enabled — llama.cpp refuses to create the context
+# otherwise — so each entry records whether ``flash_attn`` must be turned on.
+#
+# ``kv_factor`` scales the estimator's f16 KV-cache reservation. It is the
+# measured quantized-to-f16 KV size ratio for the default gemma-4 model, which
+# is mostly sliding-window layers with a padded V cache, so the saving is less
+# than the naive 8/16 or 4/16 bit ratio. Values are deliberately conservative
+# (over-reserving) to avoid VRAM OOM.
+_KV_CACHE_TYPES: dict[str, dict[str, Any]] = {
+    "f16":  {"name": "f16",  "type_k": 1, "type_v": 1, "flash_attn": False, "kv_factor": 1.0},
+    "q8_0": {"name": "q8_0", "type_k": 8, "type_v": 8, "flash_attn": True,  "kv_factor": 0.70},
+    "q4_0": {"name": "q4_0", "type_k": 2, "type_v": 2, "flash_attn": True,  "kv_factor": 0.61},
+}
+DEFAULT_KV_CACHE_TYPE = "q8_0"
 
 # The context window must hold the whole transcript prompt plus the generated
 # report, so it is sized from the transcript character budget rather than a
@@ -170,7 +192,12 @@ def _vulkan_device() -> VulkanDevice | None:
     from lib.vulkan import probe_vulkan
 
     probe = probe_vulkan()
-    return probe.selected_device if probe.available else None
+    device = probe.selected_device if probe.available else None
+    if device is not None:
+        # Pin before llama_cpp is imported so ggml-vulkan binds the same device
+        # the VRAM estimate used. (GGML_VK_VISIBLE_DEVICES is read at import.)
+        _pin_vulkan_visible_device(device)
+    return device
 
 
 def _detect_analysis_hardware() -> tuple[str, str]:
@@ -178,6 +205,14 @@ def _detect_analysis_hardware() -> tuple[str, str]:
     if profile == "cpu":
         return "cpu", "CPU"
     if profile == "vulkan":
+        device = _vulkan_device()
+        if device is not None:
+            return "vulkan", device.name
+        return "cpu", "CPU"
+    # native: llama.cpp offloads via whatever GPU backend it was compiled
+    # with. A Vulkan build cannot drive the CUDA/ROCm device that _detect_gpu()
+    # reports, so route through the Vulkan device instead.
+    if _llama_cpp_gpu_backend() == "vulkan":
         device = _vulkan_device()
         if device is not None:
             return "vulkan", device.name
@@ -504,6 +539,20 @@ def _llama_cpp_layer_count() -> int:
     return _positive_int_env(LLAMA_CPP_LAYER_COUNT_ENV) or DEFAULT_LLAMA_CPP_LAYER_COUNT
 
 
+def _kv_cache_config() -> dict[str, Any]:
+    """Return the KV cache quantization config from the environment.
+
+    Falls back to f16 (the safe default) when the env var is unset or invalid.
+    """
+    name = os.environ.get(
+        LLAMA_CPP_KV_CACHE_TYPE_ENV, DEFAULT_KV_CACHE_TYPE
+    ).strip().lower()
+    if name not in _KV_CACHE_TYPES:
+        print(f"  ⚠️  Ignoring invalid {LLAMA_CPP_KV_CACHE_TYPE_ENV}={name!r}; using {DEFAULT_KV_CACHE_TYPE}")
+        name = DEFAULT_KV_CACHE_TYPE
+    return _KV_CACHE_TYPES[name]
+
+
 def _llama_cpp_gpu_offload_supported() -> bool:
     """Return True when the installed llama-cpp-python was compiled with GPU support.
 
@@ -525,6 +574,54 @@ def _llama_cpp_gpu_offload_supported() -> bool:
         return bool(fn())
     except Exception:
         return False
+
+
+def _llama_cpp_compiled_libs() -> tuple[str, ...]:
+    """Return the lowercased shared-library names bundled with llama-cpp-python.
+
+    Uses ``importlib.util.find_spec`` (no import), so it does not trigger ggml
+    backend initialization, which reads ``GGML_VK_VISIBLE_DEVICES`` at import.
+    """
+    try:
+        spec = importlib.util.find_spec("llama_cpp")
+        if spec is None or not spec.submodule_search_locations:
+            return ()
+        pkg_dir = list(spec.submodule_search_locations)[0]
+        return tuple(name.lower() for name in os.listdir(os.path.join(pkg_dir, "lib")))
+    except Exception:
+        return ()
+
+
+def _llama_cpp_gpu_backend() -> str | None:
+    """Return the GPU backend llama-cpp-python was compiled with.
+
+    One of ``"vulkan"``, ``"cuda"``, ``"rocm"``, or ``None`` for a CPU-only
+    build. The backend decides which device path the analysis must use: a
+    Vulkan build cannot drive the CUDA/ROCm device that ``_detect_gpu()``
+    build. Reads the bundled shared libraries without importing llama_cpp, so
+    it is safe to call before ggml initializes (which is when
+    ``GGML_VK_VISIBLE_DEVICES`` must already be set).
+    """
+    libs = _llama_cpp_compiled_libs()
+    if any("vulkan" in name for name in libs):
+        return "vulkan"
+    if any("cuda" in name for name in libs):
+        return "cuda"
+    if any("rocm" in name or "hip" in name for name in libs):
+        return "rocm"
+    return None
+
+
+def _pin_vulkan_visible_device(device: VulkanDevice) -> None:
+    """Pin ggml-vulkan to *device* via ``GGML_VK_VISIBLE_DEVICES``.
+
+    ggml-vulkan reads ``GGML_VK_VISIBLE_DEVICES`` when it initializes (at
+    llama_cpp import) and defaults to device 0, which may not be the selected
+    device on a multi-GPU machine. A user-provided value is left untouched.
+    """
+    if os.environ.get("GGML_VK_VISIBLE_DEVICES"):
+        return
+    os.environ["GGML_VK_VISIBLE_DEVICES"] = str(device.index)
 
 
 def _llama_cpp_gpu_layers(
@@ -571,7 +668,7 @@ def _llama_cpp_gpu_layers(
         DEFAULT_LLAMA_CPP_KV_CACHE_GIB,
         ((context_size + 2048) / 4096)
         * DEFAULT_LLAMA_CPP_KV_CACHE_GIB,
-    )
+    ) * _kv_cache_config()["kv_factor"]
     reserve_bytes = int((headroom_gib + kv_cache_gib) * _GIB)
     safe_gpu_bytes = max(0, free_bytes - reserve_bytes)
     bytes_per_layer = model_size_bytes / max(1, layer_count)
@@ -600,13 +697,21 @@ def _llama_cpp_model_kwargs(
         )
         gpu_layers = 0
 
+    kv_cfg = _kv_cache_config()
     model_kwargs: dict[str, Any] = {
         "model_path": model_path,
         "n_ctx": _llama_cpp_context_size(transcript_chars),
         "n_batch": _llama_cpp_batch_size(),
         "n_gpu_layers": gpu_layers,
         "verbose": False,
+        "flash_attn": kv_cfg["flash_attn"],
+        "type_k": kv_cfg["type_k"],
+        "type_v": kv_cfg["type_v"],
     }
+    if kv_cfg["flash_attn"]:
+        notes = notes + (
+            f"KV cache quantized to {kv_cfg['name']} (flash attention enabled)",
+        )
     return model_kwargs, notes
 
 
