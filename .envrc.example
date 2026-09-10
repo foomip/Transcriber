@@ -2,5 +2,12 @@ export VIRTUAL_ENV="$PWD/whisper_env"
 PATH_add "$VIRTUAL_ENV/bin"
 unset PYTHON_HOME
 
+# q8_0 is the default llama.cpp KV-cache type; keep this explicit for clarity.
 export TRANSCRIBER_LLAMA_CPP_KV_CACHE_TYPE=q8_0
+
+# Lower headroom permits more GPU-layer offload at the cost of less OOM margin.
 export TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB=1.0
+
+# Optional: override the Vulkan device index. Automatic priority is NVIDIA,
+# then AMD, then other/CPU-compatible devices.
+# export TRANSCRIBER_VULKAN_DEVICE=1

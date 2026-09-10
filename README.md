@@ -81,7 +81,7 @@ Record any online meeting **or** point it at a YouTube video - transcribe with [
 
 Both paths share the same local analysis pipeline (`lib/analysis.py`, `lib/report.py`). No audio is downloaded or uploaded for the YouTube path - only the text transcript is fetched from YouTube's public subtitle endpoint.
 
-`transcribe.py` auto-detects the available local accelerators at startup. Native Faster-Whisper uses NVIDIA CUDA or AMD ROCm when CTranslate2 can see a GPU and falls back to CPU otherwise. Docker instead offers two stable targets: CPU-only, or cross-vendor Vulkan using whisper.cpp for transcription and llama.cpp/GGUF for analysis. The Vulkan path supports AMD, Intel, and NVIDIA and transparently retries failed GPU stages on CPU.
+`transcribe.py` auto-detects the available local accelerators at startup. Native Faster-Whisper uses NVIDIA CUDA or AMD ROCm when CTranslate2 can see a GPU and falls back to CPU otherwise. Native llama.cpp analysis uses the compiled backend: a Vulkan build automatically selects devices in deterministic vendor order (**NVIDIA → AMD → other/CPU**) and pins llama.cpp to the selected Vulkan device. Docker instead offers two stable targets: CPU-only, or cross-vendor Vulkan using whisper.cpp for transcription and llama.cpp/GGUF for analysis. The Vulkan path supports AMD, Intel, and NVIDIA and transparently retries failed GPU stages on CPU.
 
 ---
 
@@ -144,11 +144,12 @@ Below are GPU recommendations for each stage.
   - **Unsupported GPUs**: Older architectures (e.g. RX 500 series / Vega) are not supported by the current ROCm toolchain and will fall back to CPU transcription.
 - CPU fallback: used automatically when no GPU is detected or supported.
 
-**Summarization (llama.cpp, works with CUDA and ROCm)**
+**Summarization (llama.cpp, Vulkan/CUDA/ROCm builds)**
 
 - Minimum: **8 GB VRAM** (NVIDIA or AMD) - loads the Gemma-4 E4B Q4_0 model with limited GPU offloading.
 - Recommended: **12 GB VRAM or more** (e.g. RTX 3060-12GB, RTX 4070-12GB, RX 7900 XT) for smoother layer offloading and better throughput, especially with longer meetings.
-- VRAM scales with context length; for very long transcripts (>1 h) consider 16 GB+.
+- Native Vulkan builds select NVIDIA before AMD by default. Set `TRANSCRIBER_VULKAN_DEVICE` when a specific Vulkan device must be used.
+- The default q8_0 KV cache reduces VRAM use while retaining the full context window. VRAM still scales with context length; for very long transcripts (>1 h) consider 16 GB+.
 
 **Overall system**
 
@@ -182,7 +183,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For a native GPU build of `llama-cpp-python`, you must set `CMAKE_ARGS` during installation to enable CUDA or HIP kernels.
+For a native GPU build of `llama-cpp-python`, set `CMAKE_ARGS` during installation. If no GPU build flags are provided, `pip` installs the CPU-only version.
 
 **NVIDIA CUDA:**
 
@@ -196,7 +197,29 @@ CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-
 CMAKE_ARGS="-DGGML_HIP=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
 
-If no `CMAKE_ARGS` are provided, `pip` installs the CPU-only version.
+**Vendor-neutral Vulkan (recommended when Vulkan is the local runtime):**
+
+Install the native Vulkan build prerequisites first:
+
+```bash
+sudo apt install libvulkan-dev glslc spirv-headers
+```
+
+Build the Python binding and the local Vulkan device probe:
+
+```bash
+CC=/usr/bin/gcc CXX=/usr/bin/g++ \
+CMAKE_ARGS="-DCMAKE_CXX_COMPILER=/usr/bin/g++ -DGGML_VULKAN=ON -DGGML_NATIVE=OFF" \
+FORCE_CMAKE=1 \
+whisper_env/bin/pip install --force-reinstall --no-cache-dir \
+  --no-binary llama-cpp-python llama-cpp-python
+
+cc -O2 -std=c11 -Wall -Wextra -Werror \
+  docker/vulkan_probe.c -lvulkan \
+  -o whisper_env/bin/transcriber-vulkan-probe
+```
+
+With a Vulkan llama.cpp build, the native analysis path uses Vulkan automatically. Device selection is deterministic: NVIDIA first, AMD second, then other/CPU-compatible devices. Override the selected Vulkan device with `TRANSCRIBER_VULKAN_DEVICE` when needed.
 
 #### AMD ROCm transcription setup
 
@@ -614,7 +637,9 @@ The automatic layer split defaults to 42 model layers, matching the Gemma 4 E4B 
 
 The llama.cpp context window is sized automatically to hold the current transcript prompt plus the generated report. When the transcript length is known, the window is derived from the actual transcript size; otherwise it falls back to the configured `TRANSCRIBER_MAX_TRANSCRIPT_CHARS` budget. The result is capped at the model's trained 131072-token window. Set `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE` only to pin a fixed window.
 
-Advanced llama.cpp tuning is available through `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`, `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`, `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`, `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`, `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB`, and `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`. The defaults are intended to be conservative.
+The default KV cache is **q8_0** with flash attention enabled. This reduces KV-cache VRAM use compared with f16 while preserving the same context window. Override `TRANSCRIBER_LLAMA_CPP_KV_CACHE_TYPE` with `f16` for the unquantized cache or `q4_0` for a smaller, more aggressively quantized cache. q8_0 is recommended for the normal native Vulkan/CUDA/ROCm workflow.
+
+Advanced llama.cpp tuning is available through `TRANSCRIBER_LLAMA_CPP_MODEL_REPO`, `TRANSCRIBER_LLAMA_CPP_CONTEXT_SIZE`, `TRANSCRIBER_LLAMA_CPP_BATCH_SIZE`, `TRANSCRIBER_LLAMA_CPP_GPU_LAYERS`, `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB`, `TRANSCRIBER_LLAMA_CPP_LAYER_COUNT`, and `TRANSCRIBER_LLAMA_CPP_KV_CACHE_TYPE`. `TRANSCRIBER_LLAMA_CPP_GPU_HEADROOM_GIB` defaults to `3.0`; lowering it, for example to `1.0`, permits more layer offload but leaves less VRAM safety margin. The defaults are intended to be conservative.
 
 To compare another local Hugging Face model, first convert it to GGUF format using the tools provided by the llama.cpp project.
 
@@ -697,10 +722,16 @@ python transcribe.py <audio.wav>
 
 Add the export to your `.envrc` to make it permanent for native ROCm runs. Docker uses Vulkan instead of ROCm and does not use this allocator setting.
 
-For analysis summarisation, confirm your hardware is detected by the llama.cpp backend:
+For native llama.cpp analysis, verify the Vulkan runtime and device probe:
 
 ```bash
-python transcribe.py --help
+whisper_env/bin/transcriber-vulkan-probe
+```
+
+The native Vulkan build selects NVIDIA before AMD by default. To force a specific Vulkan device, set its probe index explicitly:
+
+```bash
+TRANSCRIBER_VULKAN_DEVICE=1 python transcribe.py meeting_20260527_114300.wav
 ```
 
 For Docker, run the same vendor-neutral probe used by the wrapper:
